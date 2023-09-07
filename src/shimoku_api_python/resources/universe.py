@@ -2,6 +2,7 @@ from typing import Optional, List
 
 from ..base_resource import Resource
 from .business import Business
+from .activity_template import ActivityTemplate
 from ..client import ApiClient
 
 import logging
@@ -15,7 +16,30 @@ class Universe(Resource):
     @logging_before_and_after(logger.debug)
     def __init__(self, api_client: ApiClient, uuid: str):
 
-        super().__init__(api_client=api_client, uuid=uuid, children=[Business])
+        super().__init__(api_client=api_client, uuid=uuid, children=[Business, ActivityTemplate])
+
+    @logging_before_and_after(logger.debug)
+    async def create_universe_api_key(self, description: str):
+        endpoint = self._base_resource.base_url + f'universe/{self._base_resource.id}/apiKey'
+
+        params = dict(
+            userType='ADMIN',
+            enabled=True,
+            description=description
+        )
+
+        return await self._base_resource.api_client.query_element(
+            method='POST', endpoint=endpoint,
+            **{'body_params': params}
+        )
+
+    @logging_before_and_after(logger.debug)
+    async def get_universe_api_keys(self):
+        endpoint = self._base_resource.base_url + f'universe/{self._base_resource.id}/apiKeys'
+
+        return (await self._base_resource.api_client.query_element(
+            method='GET', endpoint=endpoint,
+        ))['items']
 
     # Business methods
     @logging_before_and_after(logger.debug)
@@ -47,3 +71,12 @@ class Universe(Resource):
         if self._base_resource.api_client.playground:
             log_error(logger, 'Cannot delete local business', RuntimeError)
         return await self._base_resource.delete_child(Business, uuid, name)
+
+    # Activity template methods
+    @logging_before_and_after(logger.debug)
+    async def get_activity_template(self, uuid: Optional[str] = None, name: Optional[str] = None):
+        return await self._base_resource.get_child(ActivityTemplate, uuid, name)
+
+    @logging_before_and_after(logger.debug)
+    async def get_activity_templates(self):
+        return await self._base_resource.get_children(ActivityTemplate)

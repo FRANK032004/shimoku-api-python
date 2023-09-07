@@ -120,10 +120,16 @@ class Activity(Resource):
         params = dict(
             name=alias,
             settings={},
+            activityTemplateWithMode={},
+            universeApiKeyId='',
         )
 
-        super().__init__(parent=parent, uuid=uuid, db_resource=db_resource, children=[Activity.Run],
-                         check_params_before_creation=['name'], params_to_serialize=['settings'], params=params)
+        super().__init__(
+            parent=parent, uuid=uuid, db_resource=db_resource, params=params,
+            children=[Activity.Run], check_params_before_creation=['name'],
+            params_to_serialize=['settings'],
+
+        )
 
     @logging_before_and_after(logging_level=logger.debug)
     async def delete(self):

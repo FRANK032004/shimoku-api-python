@@ -68,8 +68,10 @@ class App(Resource):
 
     # Activity methods
     @logging_before_and_after(logger.debug)
-    async def create_activity(self, name: str, settings: Optional[Dict[str, str]] = None) -> Activity:
-        return await self._base_resource.create_child(Activity, alias=name, settings=settings)
+    async def create_activity(
+        self, name: str, settings: Optional[Dict[str, str]] = None, **template_params
+    ) -> Activity:
+        return await self._base_resource.create_child(Activity, alias=name, settings=settings, **template_params)
 
     @logging_before_and_after(logger.debug)
     async def update_activity(self, uuid: Optional[str] = None, name: Optional[str] = None, **params) -> Activity:

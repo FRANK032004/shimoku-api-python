@@ -1,6 +1,6 @@
 from shimoku_api_python.async_execution_pool import async_auto_call_manager, ExecutionPoolContext
 
-from typing import List, Dict, Optional, Union, Any
+from typing import List, Dict, Optional, Union, Any, TypedDict
 
 from ..resources.app import App
 from ..resources.activity import Activity
@@ -23,18 +23,45 @@ class ActivityMetadataApi:
         self._app = app
         self.epc: ExecutionPoolContext = execution_pool_context
 
+    class TemplateParams(TypedDict):
+        template_id: str
+        template_mode: str
+        universe_api_key: str
+
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def create_activity(
-        self, name: str, settings: Optional[Dict] = None
+        self, name: str, settings: Optional[Dict] = None, **template_params: Optional[TemplateParams]
     ) -> Dict:
         """
         Create an activity by its name and app id
         :param name: the name of the activity
         :param settings: the settings of the activity
+        :param template_params: the template params of the activity
         :return: the dictionary representation of the activity
         """
-        return (await self._app.create_activity(name=name, settings=settings)).cascade_to_dict()
+        template_params_to_send = {}
+
+        if template_params:
+            universe_api_key = template_params['universe_api_key']
+            universe_api_keys = await self._app.parent.parent.get_universe_api_keys()
+            if universe_api_key not in [u['id'] for u in universe_api_keys]:
+                log_error(
+                    logger,
+                    'Universe API key not found in the universe, please use an existing one.',
+                    ActivityError
+                )
+            template_params_to_send = dict(
+                activityTemplateWithMode=dict(
+                    activityTemplateId=template_params['template_id'],
+                    mode=template_params['template_mode'],
+                ),
+                universeApiKeyId=template_params['universe_api_key'],
+            )
+
+        return (
+            await self._app.create_activity(name=name, settings=settings, **template_params_to_send)
+        ).cascade_to_dict()
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)

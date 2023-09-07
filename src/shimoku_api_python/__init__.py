@@ -6,6 +6,7 @@ from shimoku_api_python.async_execution_pool import async_auto_call_manager, Exe
 
 from shimoku_api_python.api.universe_metadata_api import UniverseMetadataApi, Universe
 from shimoku_api_python.api.business_metadata_api import BusinessMetadataApi, Business
+from shimoku_api_python.api.activity_template_metadata_api import ActivityTemplateMetadataApi
 from shimoku_api_python.api.dashboard_metadata_api import DashboardMetadataApi, Dashboard
 from shimoku_api_python.api.app_metadata_api import AppMetadataApi, App
 from shimoku_api_python.api.report_metadata_api import ReportMetadataApi
@@ -83,6 +84,7 @@ class Client(object):
         self.ping = PingApi(self._api_client)
         self.universes = UniverseMetadataApi(self._api_client, self.epc)
         self.workspaces = BusinessMetadataApi(self._universe_object, self.epc)
+        self.activity_templates = ActivityTemplateMetadataApi(self._universe_object, self.epc)
         self.boards = DashboardMetadataApi(self._business_object, self.epc)
         self.menu_paths = AppMetadataApi(self._business_object, self.epc)
         self.components = ReportMetadataApi(self._app_object, self.epc)

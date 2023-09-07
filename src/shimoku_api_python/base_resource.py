@@ -567,10 +567,12 @@ class Resource(ABC):
         else:
             db_resource = {}
 
-        self._base_resource = BaseResource(api_client=api_client, uuid=uuid, parent=parent, params=params,
-                                           resource_type=self.resource_type, alias_field=self.alias_field,
-                                           params_to_serialize=params_to_serialize, await_children=await_children,
-                                           wrapper_class_instance=self)
+        self._base_resource = BaseResource(
+            api_client=api_client, uuid=uuid, parent=parent, params=params,
+            resource_type=self.resource_type, alias_field=self.alias_field,
+            params_to_serialize=params_to_serialize, await_children=await_children,
+            wrapper_class_instance=self
+        )
 
         self._base_resource.children = {
             res_class: ResourceCache(res_class, self) for res_class in children
@@ -578,6 +580,7 @@ class Resource(ABC):
 
         self._check_params_before_creation = check_params_before_creation if check_params_before_creation else []
         self.api_client: ApiClient = self._base_resource.api_client
+        self.parent = self._base_resource.parent
         self.params_to_serialize = self._base_resource.params_to_serialize
 
         for field, value in db_resource.items():
