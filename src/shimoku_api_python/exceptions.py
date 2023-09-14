@@ -80,3 +80,22 @@ class ActivityError(Exception):
         self.text = text
         self.status_code = status_code
 
+
+class WorkflowError(Exception):
+    def __init__(self, text, status_code=None):
+        self.text = text
+        self.status_code = status_code
+        
+
+class ShimokuFileError(Exception):
+    
+    def __init__(self, text, status_code=None):
+        self.text = text
+        self.status_code = status_code
+
+
+class UniverseApiKeyError(Exception):
+
+    def __init__(self, text, status_code=None):
+        self.text = text
+        self.status_code = status_code

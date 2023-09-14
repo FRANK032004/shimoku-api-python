@@ -24,7 +24,7 @@ class ActivityTemplate(Resource):
             'name': alias if alias else '',
             'description': '',
             'availableModeCost': {},
-            'inputSettings': [],
+            'inputSettings': {},
             'minRunInterval': 0,
             'enabled': False,
             'provider': '',

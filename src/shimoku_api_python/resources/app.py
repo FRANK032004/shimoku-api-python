@@ -7,7 +7,7 @@ import asyncio
 
 from ..base_resource import Resource, ResourceCache
 from ..utils import create_normalized_name
-from ..exceptions import MenuPathError, FileError
+from ..exceptions import MenuPathError, FileError, UniverseApiKeyError
 from .activity import Activity
 from .role import Role, create_role, get_role, get_roles, delete_role
 from .report import Report
@@ -67,11 +67,55 @@ class App(Resource):
         return await self._base_resource.update()
 
     # Activity methods
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _get_activity_template_id(
+        self, template_id: Optional[str] = None, template_name: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Get the activity template id from the template id or name
+        :param template_id: the template id
+        :param template_name: the template name
+        """
+        activity_template = await self.parent.parent.get_activity_template(uuid=template_id, name=template_name)
+        if activity_template:
+            return activity_template['id']
+        return None
+
     @logging_before_and_after(logger.debug)
     async def create_activity(
-        self, name: str, settings: Optional[Dict[str, str]] = None, **template_params
+        self, name: str, settings: Optional[Dict[str, str]] = None,
+        template_id: Optional[str] = None, template_name: Optional[str] = None,
+        template_mode: str = 'LIGHT', universe_api_key: str = ''
     ) -> Activity:
-        return await self._base_resource.create_child(Activity, alias=name, settings=settings, **template_params)
+        """
+        Create an activity, either from a template or from scratch
+        :param name: Name of the activity
+        :param settings: Settings of the activity
+        :param template_id: UUID of the activity template
+        :param template_name: Name of the activity template
+        :param template_mode: Mode of the activity template
+        :param universe_api_key: Universe API key to use
+        """
+        template_params_to_send = {}
+        template_id = await self._get_activity_template_id(template_id, template_name)
+        if template_id:
+            universe_api_keys = await self.parent.parent.get_universe_api_keys()
+            if universe_api_key not in [u['id'] for u in universe_api_keys]:
+                log_error(
+                    logger,
+                    'Universe API key not found in the universe, please use an existing one.',
+                    UniverseApiKeyError
+                )
+            template_params_to_send = dict(
+                activityTemplateWithMode=dict(
+                    activityTemplateId=template_id,
+                    mode=template_mode,
+                ),
+                universeApiKeyId=universe_api_key,
+            )
+        return await self._base_resource.create_child(
+            Activity, alias=name, settings=settings, **template_params_to_send
+        )
 
     @logging_before_and_after(logger.debug)
     async def update_activity(self, uuid: Optional[str] = None, name: Optional[str] = None, **params) -> Activity:

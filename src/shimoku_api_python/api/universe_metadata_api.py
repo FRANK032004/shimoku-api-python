@@ -38,5 +38,14 @@ class UniverseMetadataApi:
     @logging_before_and_after(logging_level=logger.info)
     async def get_universe_activity_templates(self, uuid: str) -> List[Dict]:
         universe = Universe(api_client=self._api_client, uuid=uuid)
-        return [at.cascade_to_dict() for at in await universe.get_activity_templates()]
+        return [{
+            'name': at['name'], 'description': at['description'],
+            'min_run_interval': at['minRunInterval'],
+            'input_settings': [{
+                'name': name,
+                'description': param['description'],
+                'datatype': param['datatype']
+            } for name, param in at['inputSettings'].items()]
+        } for at in await universe.get_activity_templates() if at['enabled']]
+
 

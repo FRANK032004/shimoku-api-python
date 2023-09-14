@@ -1,310 +1,191 @@
-""""""
-from typing import List, Dict, Optional, Callable, Tuple, Any
-import functools
-import json
-import time
-from itertools import repeat
-
-from concurrent.futures import ThreadPoolExecutor
-import requests as rq
-from requests.exceptions import Timeout, ReadTimeout
-
-import pandas as pd
+from typing import Optional, List
+from ..resources.app import App
+from ..resources.universe import Universe
+from ..resources.activity import Activity
+from ..resources.activity_template import ActivityTemplate
+from ..async_execution_pool import async_auto_call_manager, ExecutionPoolContext
+from ..exceptions import WorkflowError, ShimokuFileError
 
 import logging
-from shimoku_api_python.execution_logger import logging_before_and_after
+from shimoku_api_python.execution_logger import logging_before_and_after, log_error
 logger = logging.getLogger(__name__)
 
 
-# TODO this should not go here but in a different script, maybe aux.py?
-def with_retries(
-        _func: Optional[Callable] = None,
-        *, max_retries: int = 3, exponential_base: int = 2,
-) -> Callable:
-    """
-    Decorate a function for retries.
-    Exponential backoff.
-    """
-
-    def wrapper(func):
-        @functools.wraps(func)
-        def retries(*args, **kwargs):
-            """
-            Attempt a transaction with retries.
-            """
-            retry_exceptions = (
-                'ProvisionedThroughputExceededException',
-                'ThrottlingException'
-            )
-
-            retries = 0
-            while retries < max_retries:
-                pause_time = exponential_base ** retries
-                # logging.info('Back-off set to %d seconds', pause_time)
-
-                try:
-                    return func(*args, **kwargs)
-                # This one for Extractions from origin that return an XML / HTML rather than a proper response.
-                except json.decoder.JSONDecodeError:
-                    # For when the content cannot be decoded. Usually a bad response HTML/XML.
-                    # logger.warning(f'Request response raised JSONDecodeError in {func.__name__} | '
-                    #               f'Retry {retries} | Sleeping {exponential_base ** retries}. \n {e}')
-                    time.sleep(pause_time)
-                    retries += 1
-                # Requests errors.
-                except Timeout as e:
-                    # logger.warning(f'Request Timeout Error in {func.__name__} | Retry {retries} | '
-                    #               f'Sleeping {exponential_base ** retries}. \n {e}')
-                    print('Timeout | Retrying')
-                    time.sleep(pause_time)
-                    retries += 1
-                except ReadTimeout as e:
-                    print('ReadTimeout | Retrying')
-                    time.sleep(pause_time)
-                    retries += 1
-                except ConnectionError:
-                    print('ConnectionError | Retrying')
-                    time.sleep(pause_time)
-                    retries += 1
-
-            # raise MaxRetriesExceeded(f'Too many retries for {func.__name__} method')
-            raise ValueError(f'Too many retries for {func.__name__} method')
-
-        return retries
-
-    return wrapper if not _func else wrapper(_func)
-
-
-class AiAPI:
+class AiApi:
     @logging_before_and_after(logging_level=logger.debug)
-    def __init__(self, plot_api: Any, **kwargs):
-        self._plot_api = plot_api
+    def __init__(self, universe: Universe, app: App, execution_pool_context: ExecutionPoolContext):
+        self._app: App = app
+        self._universe: Universe = universe
+        if app is not None and universe['id'] != app.parent.parent['id']:
+            log_error(logger, f"App {str(app)} does not belong to the universe {str(universe)}", WorkflowError)
+        self.epc = execution_pool_context
 
-        if kwargs.get('business_id'):
-            self.business_id: Optional[str] = kwargs['business_id']
-        else:
-            self.business_id: Optional[str] = None
-
+    @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    def predict_categorical(
-            self, df_test: pd.DataFrame,
-            model_endpoint: Optional[str] = None,
-            app_name: Optional[str] = None, model_name: Optional[str] = None,
-            explain: bool = False, append_test_data: bool = True,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    async def show_available_workflows(self):
+        templates = await self._universe.get_activity_templates()
+        print()
+        print("///////////////////////////////////////////////////")
+        print("/////////////// Available workflows ///////////////")
 
-        def _create_request_data(window: int = 100):
-            """Iterate over a dataframe in chunks of N row returning
-            a list of json that can be sent to the ML API endpoint
+        for template in templates*3:
+            if not template['enabled']:
+                continue
+            print()
+            print(f" - AI function: \033[1m{template['name']}\033[0m")
+            print(f"   Description: {template['description']}")
+            print(f"   Minimum elapsed time between runs: {template['minRunInterval']} seconds")
+            print(f"   Input parameters:")
+            for param_name, param in template['inputSettings'].items():
+                print(f"     - {param_name}{' (Optional)' if param['mandatory'] else ''}: {param['datatype']}")
+                if param['description']:
+                    print(f"       {param['description']}")
 
-            The size of the chunks is defined by `window`
-            """
-            raw_json: str = df_test.to_json(orient='records')
-            raw_data: Dict = json.loads(raw_json)
-            size = len(raw_data)
-            for i in range(0, size, window):
-                max_value = i + window
-                if max_value > size:
-                    max_value = size
-                chunk_: List = raw_data[i: max_value]
-                chunk_: List = [json.dumps([conditions, raw_datum]) for raw_datum in chunk_]
-                yield chunk_
+        print()
+        print("///////////////////////////////////////////////////")
+        print()
 
-        def _clean_response(response_: Tuple, explainability_col_name: str = 'explainability') -> Dict:
-            """Create the result out of the response
-
-            Example
-            ---------------
-            input
-                {'ID_POL': {'0': 651407},
-                 'ID_CND': {'0': 1},
-                 'PRIMER_EFECTO': {'0': '2018-01-13 00:00:00'},
-                 'T_SEXO_TOMADOR': {'0': 'M'},
-                 'prediction_probability': {'0': 0.6594810000302692},
-                 'explainability': {
-                    'sub_price_0': {'0': -0.18447917592951263},
-                    'sub_npays_year': {'0': -0.0033977641276157094},
-                    'hol_age': {'0': 0.0319888495770443},
-                    'hol_seniority_driver': {'0': 0.016372795631977008}
-                 },
-                }
-
-            output
-                {'ID_POL': 653315,
-                 'ID_CND': 1,
-                 'PRIMER_EFECTO': '2018-01-25 12:14:00',
-                 'T_SEXO_TOMADOR': 'F',
-                 'prediction_probability': 0.7442640821276456,
-                 'explainability': {
-                    'sub_price_0': -0.32314667154583626,
-                    'sub_npays_year': -0.018958441618165747,
-                    'hol_age': 0.02434736937940205,
-                    'hol_seniority_driver': 0.0008888141433092845,
-                 }
-                }
-            """
-            # position 0 contains the request status code
-            if response_[0] < 200 or response_[0] > 300:  # position 1 contains the input
-                d = json.loads(response_[1])[1]
-                d['prediction_probability'] = 'ERROR'
-                if explain:
-                    d[explainability_col_name] = 'ERROR'
-                return d
-
-            # position 2 contains the request output
-            result_: Dict = json.loads(response_[2])
-            d: Dict = {k: v['0'] for k, v in result_.items() if k != explainability_col_name}
-            if explain:
-                d[explainability_col_name] = {
-                    k: v['0'] for k, v in result_.get(explainability_col_name).items()
-                }
-
-            if not append_test_data:
-                # TODO keep only: id, prediction column and explainability columns
-                # cols_to_avoid = [c for c in df_test.columns if c != 'ID_POL']
-                # d = {k: v for k, v in d.items() if k not in cols_to_avoid}
-                pass
-
-            return d
-
-        @with_retries
-        def _http_get_with_requests(url_: str, data: Dict) -> (int, Dict[str, Any], bytes):
-            time.sleep(.25)
-            response = rq.request('POST', url_, data=data)
-
-            response_content = None
-            try:
-                response_content = response.content
-            except Exception:
-                pass
-
-            return response.status_code, data, response_content
-
-        def _http_get_with_requests_parallel(
-                url: List[str], chunk_: List[Dict]
-        ) -> Tuple[List, List]:
-            rs: List = []
-            rs_error: List = []
-            executor = ThreadPoolExecutor(max_workers=100)
-            for result in executor.map(_http_get_with_requests, repeat(url), chunk_):
-                if result[0] >= 300:  # status_code
-                    rs_error.append(result)
-                else:
-                    rs.append(result)
-
-            # Another retry
-            if rs_error:
-                time.sleep(1)
-                new_chunk = [element[1] for element in rs_error]
-                rs_error = []
-                for result in executor.map(_http_get_with_requests, repeat(url), new_chunk):
-                    if result[0] >= 300:  # status_code
-                        rs_error.append(result)
-                    else:
-                        rs.append(result)
-
-            return rs, rs_error
-
-        if not model_endpoint:
-            if not app_name or not model_name:
-                raise ValueError('model_endpoint OR app_name and model_name are required')
-
-        results: List = []
-        results_error: List = []
-        # conditions: Dict = {"prediction_probability": True, "explainability": explain}
-        conditions: Dict = {"churn_probability": True, "shap_contributions": explain}
-        crd = _create_request_data(100)
-        for chunk in crd:
-            rs_, rs_error_ = _http_get_with_requests_parallel(url=model_endpoint, chunk_=chunk)
-            results = results + [
-                _clean_response(r, explainability_col_name='shap_contributions')
-                for r in rs_
-            ]
-            results_error = results_error + [
-                _clean_response(r, explainability_col_name='shap_contributions')
-                for r in rs_error_
-            ]
-
-        return pd.DataFrame(results), pd.DataFrame(results_error)
-
-    @logging_before_and_after(logging_level=logger.info)
-    def train_model(self) -> str:
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _get_universe_api_key(self, universe_api_key: Optional[str]) -> str:
+        """ Get the universe API key or create one if none exists
+        :param universe_api_key: Optional universe API key
+        :return: Universe API key
         """
-        returns the model endpoint
+        if universe_api_key is None:
+            universe_api_keys = await self._universe.get_universe_api_keys()
+            if len(universe_api_keys) == 0:
+                return (await self._universe.create_universe_api_key())['id']
+            return universe_api_keys[0]['id']
+        return universe_api_key
+
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _get_activity_from_template(self, name: str, universe_api_key: str, params: dict) -> Activity:
+        """ Get an activity template
+        :param name: Name of the activity template
+        :param universe_api_key: Universe API key
+        :param params: Parameters to be passed to the workflow
+        :return: Activity
         """
-        raise NotImplementedError
+        universe_api_key = await self._get_universe_api_key(universe_api_key)
 
-    @logging_before_and_after(logging_level=logger.info)
-    def predictive_table(
-            self, df_test: pd.DataFrame,
-            target_column: str, column_to_predict: str,
-            menu_path: str, order: int,
-            model_endpoint: Optional[str] = None,
-            app_name: Optional[str] = None, model_name: Optional[str] = None,
-            explain: bool = True,
-            prediction_type: str = 'categorical',
-            add_filter_by_column_to_predict: bool = True,
-            add_search_by_target_column: bool = True,
-            extra_filter_columns: Optional[List[str]] = None,
-            extra_search_columns: Optional[List[str]] = None,
-    ):
-        """Predict a tabular dataset and store the results in a model
+        if self._app is None:
+            log_error(logger, 'Menu path not set. Please use set_menu_path() method first.', AttributeError)
 
-        Example
-        --------------------
-        target_column = 'customer_id'
-        column_to_predict = 'y'
+        activity_template = await self._universe.get_activity_template(name=name)
+        if activity_template is None:
+            log_error(logger, f"The workflow {name} does not exist", WorkflowError)
 
-        :param df_test:
-        :param target_column:
-        :param column_to_predict:
-        :param menu_path:
-        :param order:
-        :param model_endpoint:
-        :param app_name:
-        :param model_name:
-        :param explain:
-        :param prediction_type:
-        :param add_filter_by_column_to_predict:
-        :param add_search_by_target_column:
-        :param extra_filter_columns:
-        :param extra_search_columns:
-        :return:
-        """
-        if not model_endpoint:
-            if not app_name or not model_name:
-                raise ValueError('model_endpoint OR app_name and model_name are required')
+        await self._check_params(activity_template, params)
+        activity_name = 'shimoku_generated_activity_' + name
 
-        available_predictions: List[str] = ['categorical']
-        if prediction_type not in available_predictions:
-            raise ValueError(
-                f'{prediction_type} not allowed | '
-                f'Prediction type available are {available_predictions}'
+        activity: Optional[Activity] = await self._app.get_activity(name=activity_name)
+        if activity is None:
+            activity: Activity = await self._app.create_activity(
+                name=activity_name,
+                template_id=activity_template['id'],
+                universe_api_key=universe_api_key
             )
+            logger.info(f'Created activity for workflow {name}')
 
-        df_result, _ = self.predict_categorical(
-            df_test=df_test, model_endpoint=model_endpoint, explain=explain,
-        )
+        return activity
 
-        if add_filter_by_column_to_predict:
-            filter_columns: List[str] = [column_to_predict]
-        else:
-            filter_columns = []
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def get_input_files(self, template_id: Optional[str] = None, template_name: Optional[str] = None, **params):
+        """ Get input files for a generic workflow
+        :param template_id: UUID of the activity template
+        :param template_name: Name of the activity template
+        :param params: Parameters to be passed to the workflow
+        """
 
-        if add_search_by_target_column:
-            search_columns: List[str] = [target_column]
-        else:
-            search_columns = []
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def create_output_files(self, template_id: Optional[str] = None, template_name: Optional[str] = None, **params):
+        """ Create output files for a generic workflow
+        :param template_id: UUID of the activity template
+        :param template_name: Name of the activity template
+        :param params: Parameters to be passed to the workflow
+        """
 
-        if extra_filter_columns:
-            filter_columns = filter_columns + extra_filter_columns
-        if extra_search_columns:
-            search_columns = search_columns + extra_search_columns
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def get_output_files(self, name: str, model: Optional[str] = None):
+        """ Get output files for a generic workflow
+        :param name: Name of the workflow to execute
+        :param model: Name of the model to use
+        :return: The output files if they exist
+        """
 
-        self._plot_api.table(
-            data=df_result,
-            menu_path=menu_path,
-            order=order,
-            filter_columns=filter_columns,
-            search_columns=search_columns,
-        )
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _create_input_file(self, activity_template: ActivityTemplate, file: bytes, param_name: str) -> str:
+        """ Create an input file for a workflow and return its uuid
+        :param activity_template: Activity template of the workflow
+        :param file: File to be uploaded
+        :return: The uuid of the created file
+        """
+
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _check_params(self, activity_template: ActivityTemplate, params: dict):
+        """ Check the parameters passed to the workflow, and create input files if necessary
+        :param activity_template: Activity template of the workflow
+        :param params: Parameters to be passed to the workflow
+        """
+        input_settings = activity_template['inputSettings']
+        if any(param not in input_settings for param in params):
+            log_error(
+                logger,
+                f"Unknown parameters for workflow {activity_template['name']}: "
+                f"{[param for param in params if param not in input_settings]} \n"
+                f"The possible parameters are: {list(input_settings.keys())}",
+                WorkflowError
+            )
+        for param_name, definition in input_settings.items():
+            if param_name not in params:
+                if definition['mandatory']:
+                    log_error(
+                        logger,
+                        f"Missing parameter {param_name} for activity template {activity_template['name']}, "
+                        f"the description of the missing parameter is: {definition['description']}",
+                        WorkflowError
+                    )
+                else:
+                    continue
+            param_value = params[param_name]
+            param_definition_type = definition['datatype']
+            if definition['datatype'] == 'file':
+                if isinstance(param_value, str):
+                    if not await self._app.get_file(uuid=param_value):
+                        log_error(logger, f"File with uuid {param_value} does not exist", ShimokuFileError)
+                else:
+                    params[param_name] = await self._create_input_file(activity_template, param_value, param_name)
+            elif str(type(param_value)) != f"<class '{param_definition_type}'>":
+                log_error(
+                    logger,
+                    f"Wrong type for parameter {param_name} for activity template {activity_template['name']}"
+                    f"the description of the missing parameter is: {definition['description']}\n"
+                    f"Expected type: {param_definition_type}\n"
+                    f"Provided type: {str(type(param_value))[8:-2]}",
+                    WorkflowError
+                )
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def get_last_logs(self, name: str, how_many_runs: int = 1):
+        """ Get the logs of the executions of a workflow
+        :param name: Name of the workflow to execute
+        :param how_many_runs: Number of executions to get
+        :return: The logs of the workflow
+        """
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def generic_execute(self, name: str, universe_api_key: Optional[str] = None, **params):
+        """ Execute a generic workflow
+        :param name: Name of the workflow to execute
+        :param universe_api_key: API key of the universe
+        :param params: Parameters to be passed to the workflow
+        """
+        activity: Activity = await self._get_activity_from_template(name, universe_api_key, params)
+        run: Activity.Run = await activity.create_run(settings=params)
+        logger.info(f'Result of execution: {await run.trigger_webhook()}')
+

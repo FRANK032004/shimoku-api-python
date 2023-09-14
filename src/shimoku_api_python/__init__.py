@@ -13,7 +13,7 @@ from shimoku_api_python.api.report_metadata_api import ReportMetadataApi
 from shimoku_api_python.api.data_managing_api import DataSetManagingApi
 from shimoku_api_python.api.file_metadata_api import FileMetadataApi
 from shimoku_api_python.api.plot_api import PlotApi
-from shimoku_api_python.api.ai_api import AiAPI
+from shimoku_api_python.api.ai_api import AiApi
 from shimoku_api_python.api.ping_api import PingApi
 from shimoku_api_python.api.activity_metadata_api import ActivityMetadataApi
 from shimoku_api_python.websockets_server import EventType
@@ -92,6 +92,8 @@ class Client(object):
         self.io = FileMetadataApi(self._app_object, self.epc)
         self.activities = ActivityMetadataApi(self._app_object, self.epc)
         self.plt = PlotApi(self._app_object, self.epc)
+        self.ai = AiApi(self._universe_object, self._app_object, self.epc)
+
         self._reuse_data_sets = False
         self._shared_dfs = {}
         self._shared_custom_data = {}
@@ -99,7 +101,6 @@ class Client(object):
         self.epc.current_app = self._app_object
         self.epc.universe = self._universe_object
 
-        # self.ai = AiAPI(None)
         self.html_components = shimoku_components_catalog.html_components
 
     @logging_before_and_after(logging_level=logger.info)
@@ -211,6 +212,7 @@ class Client(object):
         self.plt = PlotApi(self._app_object, self.epc, self._reuse_data_sets)
         self.data = DataSetManagingApi(self._app_object, self.epc)
         self.io = FileMetadataApi(self._app_object, self.epc)
+        self.ai = AiApi(self._universe_object, self._app_object, self.epc)
 
         if not self._dashboard_object:
             self._dashboard_object = await self._business_object.get_dashboard(name='Default Name')

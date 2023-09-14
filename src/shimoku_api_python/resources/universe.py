@@ -74,9 +74,11 @@ class Universe(Resource):
 
     # Activity template methods
     @logging_before_and_after(logger.debug)
-    async def get_activity_template(self, uuid: Optional[str] = None, name: Optional[str] = None):
+    async def get_activity_template(
+        self, uuid: Optional[str] = None, name: Optional[str] = None
+    ) -> Optional[ActivityTemplate]:
         return await self._base_resource.get_child(ActivityTemplate, uuid, name)
 
     @logging_before_and_after(logger.debug)
-    async def get_activity_templates(self):
+    async def get_activity_templates(self) -> List[ActivityTemplate]:
         return await self._base_resource.get_children(ActivityTemplate)
