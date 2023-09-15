@@ -312,14 +312,17 @@ class App(Resource):
 
     # File methods
     @logging_before_and_after(logger.debug)
-    async def create_file(self, name: str, file_object: bytes) -> File:
+    async def create_file(self, name: str, file_object: bytes, tags: list, metadata: dict) -> File:
         """ Creates a file.
         :param name: The file to create.
         :param file_object: The file object.
+        :param tags: The tags of the file.
+        :param metadata: The metadata of the file.
         :return: The created file.
         """
-        name = await self._base_resource.create_child(File, alias=name, contentType='text/csv')
-
+        name = await self._base_resource.create_child(
+            File, alias=name, contentType='text/csv', tags=tags, metadata=metadata
+        )
         async with aiohttp.ClientSession() as session:
             logger.info(f'Uploading file {str(name)}')
             async with session.put(name['url'], data=file_object, headers={'Content-Type': 'text/csv'}) as resp:

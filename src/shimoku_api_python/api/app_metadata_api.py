@@ -159,30 +159,38 @@ class AppMetadataApi:
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def get_menu_path_files(
-        self, uuid: Optional[str] = None, name: Optional[str] = None
+        self, uuid: Optional[str] = None, name: Optional[str] = None, with_shimoku_generated: Optional[bool] = False
     ) -> List[Dict]:
         """ Get the files of an menu path
         :param uuid: uuid of the menu path
         :param name: name of the menu path
+        :param with_shimoku_generated: whether the file is generated internally by the SDK
         """
         app: Optional[App] = await self._get_app_with_warning(uuid=uuid, name=name)
         if not app:
             return []
-        return [file.cascade_to_dict() for file in await app.get_files()]
+        files = await app.get_files()
+        if not with_shimoku_generated:
+            files = [file for file in files if 'shimoku_generated' not in file['tags']]
+        return [file.cascade_to_dict() for file in files]
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def delete_all_menu_path_files(
-        self, uuid: Optional[str] = None, name: Optional[str] = None
+        self, uuid: Optional[str] = None, name: Optional[str] = None, with_shimoku_generated: Optional[bool] = False
     ):
         """ Delete all files of an menu path
         :param uuid: uuid of the menu path
         :param name: name of the menu path
+        :param with_shimoku_generated: whether the file is generated internally by the SDK
         """
         app: Optional[App] = await self._get_app_with_warning(uuid=uuid, name=name)
         if not app:
             return
-        await asyncio.gather(*[app.delete_file(uuid=file['id']) for file in await app.get_files()])
+        files = await app.get_files()
+        if not with_shimoku_generated:
+            files = [file for file in files if 'shimoku_generated' not in file['tags']]
+        await asyncio.gather(*[app.delete_file(uuid=file['id']) for file in files])
 
     # Role management
     get_role = user_get_role

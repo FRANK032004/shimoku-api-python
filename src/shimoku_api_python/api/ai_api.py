@@ -32,12 +32,11 @@ class AiApi:
             if not template['enabled']:
                 continue
             print()
-            print(f" - AI function: \033[1m{template['name']}\033[0m")
-            print(f"   Description: {template['description']}")
-            print(f"   Minimum elapsed time between runs: {template['minRunInterval']} seconds")
-            print(f"   Input parameters:")
+            print(f" \033[1m- AI function:\033[0m {template['name']}")
+            print(f"   \033[1mDescription:\033[0m {template['description']} (wait time between runs: >{template['minRunInterval']}s)")
+            print(f"   \033[1mInput parameters:\033[0m")
             for param_name, param in template['inputSettings'].items():
-                print(f"     - {param_name}{' (Optional)' if param['mandatory'] else ''}: {param['datatype']}")
+                print(f"     \033[1m- {param_name}{' (Optional)' if not param['mandatory'] else ''}:\033[0m {param['datatype']}")
                 if param['description']:
                     print(f"       {param['description']}")
 
@@ -59,11 +58,23 @@ class AiApi:
         return universe_api_key
 
     @logging_before_and_after(logging_level=logger.debug)
-    async def _get_activity_from_template(self, name: str, universe_api_key: str, params: dict) -> Activity:
+    async def _get_activity_template(self, name: str) -> ActivityTemplate:
         """ Get an activity template
         :param name: Name of the activity template
+        :return: Activity template
+        """
+        activity_template = await self._universe.get_activity_template(name=name)
+        if activity_template is None:
+            log_error(logger, f"The workflow {name} does not exist", WorkflowError)
+        return activity_template
+
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _get_activity_from_template(
+        self, activity_template: ActivityTemplate, universe_api_key: str = '', create_if_not_exists: bool = True
+    ) -> Activity:
+        """ Get an activity from an activity template
+        :param activity_template: Activity template
         :param universe_api_key: Universe API key
-        :param params: Parameters to be passed to the workflow
         :return: Activity
         """
         universe_api_key = await self._get_universe_api_key(universe_api_key)
@@ -71,15 +82,13 @@ class AiApi:
         if self._app is None:
             log_error(logger, 'Menu path not set. Please use set_menu_path() method first.', AttributeError)
 
-        activity_template = await self._universe.get_activity_template(name=name)
-        if activity_template is None:
-            log_error(logger, f"The workflow {name} does not exist", WorkflowError)
-
-        await self._check_params(activity_template, params)
+        name = activity_template['name']
         activity_name = 'shimoku_generated_activity_' + name
 
         activity: Optional[Activity] = await self._app.get_activity(name=activity_name)
         if activity is None:
+            if not create_if_not_exists:
+                log_error(logger, f"The activity {activity_name} does not exist", WorkflowError)
             activity: Activity = await self._app.create_activity(
                 name=activity_name,
                 template_id=activity_template['id'],
@@ -123,6 +132,7 @@ class AiApi:
         :param file: File to be uploaded
         :return: The uuid of the created file
         """
+
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _check_params(self, activity_template: ActivityTemplate, params: dict):
@@ -170,12 +180,43 @@ class AiApi:
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    async def get_last_logs(self, name: str, how_many_runs: int = 1):
+    async def get_last_executions_with_logs(self, name: str, how_many: int = 1):
         """ Get the logs of the executions of a workflow
         :param name: Name of the workflow to execute
-        :param how_many_runs: Number of executions to get
+        :param how_many: Number of executions to get
         :return: The logs of the workflow
         """
+        activity_template: ActivityTemplate = await self._get_activity_template(name)
+        activity: Activity = await self._get_activity_from_template(activity_template, create_if_not_exists=False)
+        runs: List[Activity.Run] = await activity.get_runs(how_many)
+        return [run.cascade_to_dict() for run in runs]
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def show_last_execution_logs(self, name: str, how_many: int = 1):
+        """ Show the logs of the executions of a workflow
+        :param name: Name of the workflow to execute
+        :param how_many: Number of executions to get
+        """
+        activity_template: ActivityTemplate = await self._get_activity_template(name)
+        activity: Activity = await self._get_activity_from_template(activity_template, create_if_not_exists=False)
+        runs: List[Activity.Run] = await activity.get_runs(how_many)
+        print()
+        print("///////////////////////////////////////////////////")
+        string_to_print = f' LOGS OF {name.upper()} '
+        print(string_to_print.center(51, '/'))
+
+        for run in runs:
+            print()
+            print(f' - Run {run["id"]}:')
+            print(f'   Settings: {", ".join([f"{key}: {value}" for key, value in run["settings"].items()])}')
+            print(f'   Logs:')
+            for log in (await run.get_logs()):
+                print(f'     - {log["severity"]} | {log["message"]}, at {log["dateTime"]}')
+
+        print()
+        print("///////////////////////////////////////////////////")
+        print()
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -185,7 +226,9 @@ class AiApi:
         :param universe_api_key: API key of the universe
         :param params: Parameters to be passed to the workflow
         """
-        activity: Activity = await self._get_activity_from_template(name, universe_api_key, params)
+        activity_template: ActivityTemplate = await self._get_activity_template(name)
+        activity: Activity = await self._get_activity_from_template(activity_template, universe_api_key)
+        await self._check_params(activity_template, params)
         run: Activity.Run = await activity.create_run(settings=params)
         logger.info(f'Result of execution: {await run.trigger_webhook()}')
 

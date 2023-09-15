@@ -23,7 +23,7 @@ s = shimoku.Client(
 )
 s.set_workspace(uuid=business_id)
 s.set_menu_path('File test')
-# s.menu_paths.delete_all_menu_path_files(name='File test')
+s.menu_paths.delete_all_menu_path_files(name='File test', with_shimoku_generated=True)
 
 
 def test_general_files():
@@ -53,10 +53,30 @@ def test_general_files():
     assert 'helloworld.csv' not in [file['name'] for file in files]
 
 
+def test_tags_and_metadata():
+    previous_len_files = len(s.menu_paths.get_menu_path_files(name='File test'))
+    s.io.post_object(
+        file_name='Shimoku generated file', obj=b'',
+        tags=['shimoku_generated', 'IO'], metadata={'business_id': business_id}
+    )
+    len_files = len(s.menu_paths.get_menu_path_files(name='File test'))
+    assert len_files == previous_len_files
+    len_files = len(s.menu_paths.get_menu_path_files(name='File test', with_shimoku_generated=True))
+    assert len_files == previous_len_files + 1
+    file = s.io.get_object(file_name='Shimoku generated file')
+    assert file == b''
+    file_metadata = s.io.get_file_metadata(file_name='Shimoku generated file')
+    assert file_metadata['metadata']['business_id'] == business_id
+    assert file_metadata['tags'] == ['shimoku_generated', 'IO']
+    s.io.delete_file(file_name='Shimoku generated file')
+    len_files = len(s.menu_paths.get_menu_path_files(name='File test', with_shimoku_generated=True))
+    assert len_files == previous_len_files
+
+
 def test_get_object():
     file_name = 'helloworld'
     object_data = b''
-    s.io.post_object(file_name, object_data)
+    s.io.post_object(file_name=file_name, obj=object_data)
     file = s.io.get_object(file_name=file_name)
     assert file == object_data
 
@@ -99,5 +119,8 @@ def test_big_data():
 test_general_files()
 test_get_object()
 test_post_dataframe()
+test_tags_and_metadata()
 test_post_get_model()
 test_big_data()
+
+s.run()
