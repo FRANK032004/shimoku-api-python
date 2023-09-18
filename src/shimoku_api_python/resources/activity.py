@@ -3,7 +3,7 @@ import datetime as dt
 import asyncio
 import json
 
-from typing import List, Dict, Optional, Union, TYPE_CHECKING
+from typing import List, Dict, Optional, Union, TYPE_CHECKING, TypedDict
 
 from ..base_resource import Resource
 
@@ -23,6 +23,12 @@ class Activity(Resource):
     resource_type = 'activity'
     alias_field = 'name'
     plural = 'activities'
+
+    class ActivityParams(TypedDict):
+        name: Optional[str]
+        settings: dict
+        activityTemplateWithMode: Optional[dict]
+        universeApiKeyId: Optional[str]
 
     class Run(Resource):
         """
@@ -117,11 +123,11 @@ class Activity(Resource):
     def __init__(self, parent: 'App', uuid: Optional[str] = None, alias: Optional[str] = None,
                  db_resource: Optional[Dict] = None):
 
-        params = dict(
+        params: Activity.ActivityParams = dict(
             name=alias,
             settings={},
-            activityTemplateWithMode={},
-            universeApiKeyId='',
+            activityTemplateWithMode=None,
+            universeApiKeyId=None,
         )
 
         super().__init__(

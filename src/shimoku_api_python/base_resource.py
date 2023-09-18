@@ -343,6 +343,8 @@ class BaseResource:
 
             assert isinstance(self.params[field], (dict, list))
 
+        params = {k: v for k, v in params.items() if v is not None}
+
         obj = await (
             self.api_client.query_element(
                 method='POST', endpoint=endpoint,

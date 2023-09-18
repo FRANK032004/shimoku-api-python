@@ -113,6 +113,7 @@ class App(Resource):
                 ),
                 universeApiKeyId=universe_api_key,
             )
+
         return await self._base_resource.create_child(
             Activity, alias=name, settings=settings, **template_params_to_send
         )
