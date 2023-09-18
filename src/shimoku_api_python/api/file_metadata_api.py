@@ -44,22 +44,10 @@ class FileMetadataApi:
         """
         return (await self._app.get_file(uuid=uuid, name=file_name)).cascade_to_dict()
 
-    @logging_before_and_after(logging_level=logger.debug)
-    async def _overwrite_file(
-        self, file_name: str, overwrite: bool = True
-    ):
-        """ Overwrite a file
-        :param file_name: name of the file
-        :param overwrite: if True, overwrite the file if it already exists
-        """
-        if overwrite and file_name in [file['name'] for file in await self._app.get_files()]:
-            logger.info(f'Overwriting file {file_name}')
-            await self._app.delete_file(name=file_name)
-
     @async_auto_call_manager()
     @logging_before_and_after(logging_level=logger.info)
     async def post_object(
-        self, obj: bytes, file_name: Optional[str] = None, overwrite: bool = True,
+        self, file_name: str, obj: bytes, overwrite: bool = True,
         tags: Optional[list] = None, metadata: Optional[dict] = None
     ):
         """ Save an object
@@ -69,9 +57,7 @@ class FileMetadataApi:
         :param tags: tags to be added to the file
         :param metadata: metadata to be added to the file
         """
-        if file_name is not None:
-            await self._overwrite_file(file_name=file_name, overwrite=overwrite)
-        await self._app.create_file(name=file_name, file_object=obj, tags=tags, metadata=metadata)
+        await self._app.create_file(name=file_name, file_object=obj, tags=tags, metadata=metadata, overwrite=overwrite)
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -88,23 +74,20 @@ class FileMetadataApi:
     @async_auto_call_manager()
     @logging_before_and_after(logging_level=logger.info)
     async def post_dataframe(
-        self, df: pd.DataFrame, file_name: Optional[str] = None, overwrite: bool = True,
+        self, file_name: str, df: pd.DataFrame, overwrite: bool = True,
         tags: Optional[list] = None, metadata: Optional[dict] = None
     ):
         """ Save a dataframe
         :param df: dataframe to be saved
-        :param uuid: uuid of the file
         :param file_name: name of the file
         :param overwrite: if True, overwrite the file if it already exists
         :param tags: tags to be added to the file
         :param metadata: metadata to be added to the file
         :return: object
         """
-        if file_name is not None:
-            await self._overwrite_file(file_name=file_name, overwrite=overwrite)
         dataframe_binary: bytes = df.to_csv(index=False).encode('utf-8')
         await self._app.create_file(
-            name=file_name, file_object=dataframe_binary, tags=tags, metadata=metadata
+            name=file_name, file_object=dataframe_binary, tags=tags, metadata=metadata, overwrite=overwrite
         )
 
     @logging_before_and_after(logging_level=logger.debug)
@@ -181,13 +164,13 @@ class FileMetadataApi:
         files = await self._app.get_files()
         files = [file for file in files if file['name'].startswith(file_name+'_batch_')]
         files = sorted(files, key=lambda x: int(x['name'].split('_batch_')[1]))
-        results = await asyncio.gather(*[self._get_dataframe(file['name']) for file in files])
+        results = await asyncio.gather(*[self._get_dataframe(file['id']) for file in files])
         return pd.concat(results, ignore_index=True)
 
     @async_auto_call_manager()
     @logging_before_and_after(logging_level=logger.info)
     async def post_ai_model(
-        self, model: Callable, model_name: Optional[str] = None, overwrite: bool = True,
+        self, model_name: str, model: Callable, overwrite: bool = True,
         tags: Optional[list] = None, metadata: Optional[dict] = None
     ):
         """ Save a model
@@ -197,11 +180,9 @@ class FileMetadataApi:
         :param tags: tags to be added to the file
         :param metadata: metadata to be added to the file
         """
-        if model_name is not None:
-            await self._overwrite_file(file_name=model_name, overwrite=overwrite)
         model_binary: bytes = pickle.dumps(model)
         return await self._app.create_file(
-            name=model_name, file_object=model_binary, tags=tags, metadata=metadata
+            name=model_name, file_object=model_binary, tags=tags, metadata=metadata, overwrite=overwrite
         )
 
     @async_auto_call_manager(execute=True)

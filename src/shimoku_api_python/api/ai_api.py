@@ -1,7 +1,8 @@
-from typing import Optional, List
+from typing import Optional, List, Dict
 from ..resources.app import App
 from ..resources.universe import Universe
 from ..resources.activity import Activity
+from ..resources.file import File
 from ..resources.activity_template import ActivityTemplate
 from ..async_execution_pool import async_auto_call_manager, ExecutionPoolContext
 from ..exceptions import WorkflowError, ShimokuFileError
@@ -98,22 +99,45 @@ class AiApi:
 
         return activity
 
-    @async_auto_call_manager(execute=True)
-    @logging_before_and_after(logging_level=logger.info)
-    async def get_input_files(self, template_id: Optional[str] = None, template_name: Optional[str] = None, **params):
-        """ Get input files for a generic workflow
-        :param template_id: UUID of the activity template
-        :param template_name: Name of the activity template
-        :param params: Parameters to be passed to the workflow
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _create_input_file(self, activity_template: ActivityTemplate, file: bytes, param_name: str) -> str:
+        """ Create an input file for a workflow and return its uuid
+        :param activity_template: Activity template of the workflow
+        :param file: File to be uploaded
+        :return: The uuid of the created file
         """
+        file_name = f"shimoku_generated_file_{param_name}"
+        file = await self._app.create_file(
+            name=file_name, file_object=file,
+            tags=['shimoku_generated', 'ai_input_file'],
+            metadata={'template': activity_template['name']}
+        )
+        logger.info(f'Created input file {file_name}')
+        return file['id']
+
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _create_output_file(self, activity_template: ActivityTemplate, param_name: str, file: bytes) -> str:
+        """ Create an output file of a workflow
+        :param activity_template: Activity template of the workflow
+        :param file: File to be uploaded
+        :return: The uuid of the created file
+        """
+        file_name = f"shimoku_generated_file_{param_name}"
+        file = await self._app.create_file(
+            name=file_name, file_object=file,
+            tags=['shimoku_generated', 'ai_output_file'],
+            metadata={'template': activity_template['name']}
+        )
+        logger.info(f'Created output file {file_name}')
+        return file['id']
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    async def create_output_files(self, template_id: Optional[str] = None, template_name: Optional[str] = None, **params):
-        """ Create output files for a generic workflow
-        :param template_id: UUID of the activity template
-        :param template_name: Name of the activity template
-        :param params: Parameters to be passed to the workflow
+    async def create_output_files(self, name: str, files: Dict[str, bytes], model: Optional[str] = None):
+        """ Create output files of a workflow
+        :param name: Name of the executed workflow
+        :param files: Files to be uploaded
+        :param model: Name of the model used
         """
 
     @async_auto_call_manager(execute=True)
@@ -125,14 +149,48 @@ class AiApi:
         :return: The output files if they exist
         """
 
-    @logging_before_and_after(logging_level=logger.debug)
-    async def _create_input_file(self, activity_template: ActivityTemplate, file: bytes, param_name: str) -> str:
-        """ Create an input file for a workflow and return its uuid
-        :param activity_template: Activity template of the workflow
-        :param file: File to be uploaded
-        :return: The uuid of the created file
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def create_model(self, name: str, model: bytes, metadata: Optional[dict] = None):
+        """ Create a model
+        :param name: Name of the model
+        :param model: Model to be uploaded
+        :param metadata: Metadata of the model
         """
+        file_name = f"shimoku_generated_model_{name}"
 
+        await self._app.create_file(
+            name=file_name, file_object=model,
+            tags=['shimoku_generated', 'ai_model'],
+            metadata={'name': name, **(metadata or {})}
+        )
+        logger.info(f'Created model {name}')
+
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _get_model_file(self, name: str) -> Optional[File]:
+        """ Get a model
+        :param name: Name of the model
+        :return: The model if it exists
+        """
+        file_name = f"shimoku_generated_model_{name}"
+        file = await self._app.get_file(name=file_name)
+        if file and ('ai_model' not in file['tags'] or
+                     'shimoku_generated' not in file['tags'] or
+                     file['metadata']['name'] != name):
+            log_error(logger, f"The file {name} is not a model", WorkflowError)
+        return file
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def get_model(self, name: str):
+        """ Get a model
+        :param name: Name of the model
+        :return: The model if it exists
+        """
+        model_file: File = await self._get_model_file(name)
+        if model_file is None:
+            log_error(logger, f"The model {name} does not exist", WorkflowError)
+        return await self._app.get_file_object(model_file['id'])
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _check_params(self, activity_template: ActivityTemplate, params: dict):

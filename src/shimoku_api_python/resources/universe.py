@@ -50,8 +50,9 @@ class Universe(Resource):
 
     @logging_before_and_after(logger.debug)
     async def update_business(self, uuid: Optional[str] = None, name: Optional[str] = None, **params):
-        if 'new_name' in params:
-            params['new_alias'] = params.pop('new_name')
+        if params.get('new_name') is not None:
+            params['name'] = params.pop('new_name')
+            params['new_alias'] = True
         if self._base_resource.api_client.playground:
             uuid, name = 'local', None
         return await self._base_resource.update_child(Business, uuid=uuid, alias=name, **params)
@@ -81,4 +82,25 @@ class Universe(Resource):
 
     @logging_before_and_after(logger.debug)
     async def get_activity_templates(self) -> List[ActivityTemplate]:
+        return [ActivityTemplate(parent=self, db_resource={
+            'id': 'test',
+            'name': 'TEST WORKFLOW',
+            'description': 'Test Workflow from data team',
+            'minRunInterval': 30,
+            'enabled': True,
+            'version': '1.0.0',
+            'tags': ['testWorkflow', 'type:test'],
+            'inputSettings': {
+                'test_mandatory': {
+                    'dataType': 'str',
+                    'description': 'Mandatory text added inside the output file',
+                    'mandatory': True
+                },
+                'text_optional': {
+                    'dataType': 'str',
+                    'description': 'Optional text added inside the output file',
+                    'mandatory': False
+                },
+            }
+        })]
         return await self._base_resource.get_children(ActivityTemplate)
