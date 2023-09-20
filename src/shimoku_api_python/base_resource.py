@@ -62,11 +62,47 @@ class ResourceCache:
             endpoint: str = f'{self._parent["base_url"]}{self._parent.resource_type}/' \
                             f'{self._parent["id"]}/{self._resource_plural}'
 
-            resources_raw: Dict = await (
-                self._parent.api_client.query_element(
-                    endpoint=endpoint, method='GET', limit=limit
+            if self._resource_class.resource_type == 'activityTemplate':
+                resources_raw = {'items': [{
+                    'id': 'test1',
+                    'name': 'TEST WORKFLOW',
+                    'description': 'Test Workflow from data team',
+                    'minRunInterval': 30,
+                    'enabled': True,
+                    'version': '1.0.2',
+                    'tags': ['testWorkflow', 'type:test'],
+                    'inputSettings':
+                        '{"test_mandatory": {"datatype": "str", "description": "Mandatory text added inside the output file", "mandatory": true},'
+                        '"text_optional": {"datatype": "str", "description": "Optional text added inside the output file", "mandatory": false}}'
+                }, {
+                    'id': 'test2',
+                    'name': 'TEST WORKFLOW',
+                    'description': 'Test Workflow from data team',
+                    'minRunInterval': 30,
+                    'enabled': True,
+                    'version': '1.0.2',
+                    'tags': ['testWorkflow', 'type:test'],
+                    'inputSettings':
+                        '{"test_mandatory": {"datatype": "str", "description": "Mandatory text added inside the output file", "mandatory": true},'
+                        '"text_optional": {"datatype": "str", "description": "Optional text added inside the output file", "mandatory": false}}'
+                }, {
+                    'id': 'test3',
+                    'name': 'TEST WORKFLOW',
+                    'description': 'Test Workflow from data team',
+                    'minRunInterval': 30,
+                    'enabled': True,
+                    'version': '1.0.10',
+                    'tags': ['testWorkflow', 'type:test'],
+                    'inputSettings':
+                        '{"test_mandatory": {"datatype": "str", "description": "Mandatory text added inside the output file", "mandatory": true},'
+                        '"text_optional": {"datatype": "str", "description": "Optional text added inside the output file", "mandatory": false}}'
+                }]}
+            else:
+                resources_raw: Dict = await (
+                    self._parent.api_client.query_element(
+                        endpoint=endpoint, method='GET', limit=limit
+                    )
                 )
-            )
             try:
                 resources = resources_raw.get('items') if isinstance(resources_raw, dict) else resources_raw
                 if not isinstance(resources, list):
@@ -75,13 +111,17 @@ class ResourceCache:
                 logger.warning("Resource's json should have an 'items' field")
                 return []
 
+            # Sort resources by id to ensure consistent ordering for alias collision resolution
+            resources = sorted(resources, key=lambda x: x.get('id'))
+
             for resource_dict in resources:
                 resource = self._resource_class(db_resource=resource_dict, parent=self._parent)
-                self._cache[resource_dict.get('id')] = resource
                 alias_entry = resource['alias']
                 if alias_entry:
+                    if alias_entry in self._aliases:
+                        continue
                     self._aliases[alias_entry] = resource_dict.get('id')
-
+                self._cache[resource_dict.get('id')] = resource
                 resource.empty_changed_params()
 
         self._listing_lock = None

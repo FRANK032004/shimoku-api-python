@@ -7,7 +7,7 @@ import asyncio
 
 from ..base_resource import Resource, ResourceCache
 from ..utils import create_normalized_name
-from ..exceptions import MenuPathError, FileError, UniverseApiKeyError
+from ..exceptions import MenuPathError, FileError, UniverseApiKeyError, ActivityTemplateError
 from .activity import Activity
 from .role import Role, create_role, get_role, get_roles, delete_role
 from .report import Report
@@ -69,22 +69,26 @@ class App(Resource):
     # Activity methods
     @logging_before_and_after(logging_level=logger.debug)
     async def _get_activity_template_id(
-        self, template_id: Optional[str] = None, template_name: Optional[str] = None
-    ) -> Optional[str]:
+        self, template_id: Optional[str] = None, template_name_version: Optional[Tuple[str, str]] = None
+    ) -> str:
         """
         Get the activity template id from the template id or name
         :param template_id: the template id
-        :param template_name: the template name
+        :param template_name_version: the template name and version
         """
-        activity_template = await self.parent.parent.get_activity_template(uuid=template_id, name=template_name)
+        activity_template = await self.parent.parent.get_activity_template(
+            uuid=template_id, name_version=template_name_version
+        )
         if activity_template:
             return activity_template['id']
-        return None
+
+        log_error(logger, 'Activity template not found in the universe, please use an existing one.',
+                  ActivityTemplateError)
 
     @logging_before_and_after(logger.debug)
     async def create_activity(
         self, name: str, settings: Optional[Dict[str, str]] = None,
-        template_id: Optional[str] = None, template_name: Optional[str] = None,
+        template_id: Optional[str] = None, template_name_version: Optional[Tuple[str, str]] = None,
         template_mode: str = 'LIGHT', universe_api_key: str = ''
     ) -> Activity:
         """
@@ -92,20 +96,19 @@ class App(Resource):
         :param name: Name of the activity
         :param settings: Settings of the activity
         :param template_id: UUID of the activity template
-        :param template_name: Name of the activity template
+        :param template_name_version: Name and version of the activity template
         :param template_mode: Mode of the activity template
         :param universe_api_key: Universe API key to use
         """
         template_params_to_send = {}
-        template_id = await self._get_activity_template_id(template_id, template_name)
-        if template_id:
+
+        if template_id or template_name_version:
+            template_id = await self._get_activity_template_id(template_id, template_name_version)
             universe_api_keys = await self.parent.parent.get_universe_api_keys()
             if universe_api_key not in [u['id'] for u in universe_api_keys]:
-                log_error(
-                    logger,
-                    'Universe API key not found in the universe, please use an existing one.',
-                    UniverseApiKeyError
-                )
+                log_error(logger, 'Universe API key not found in the universe, please use an existing one.',
+                          UniverseApiKeyError)
+
             template_params_to_send = dict(
                 activityTemplateWithMode=dict(
                     activityTemplateId=template_id,
@@ -120,8 +123,9 @@ class App(Resource):
 
     @logging_before_and_after(logger.debug)
     async def update_activity(self, uuid: Optional[str] = None, name: Optional[str] = None, **params) -> Activity:
-        if 'new_name' in params:
-            params['new_alias'] = params.pop('new_name')
+        if params.get('new_name') is not None:
+            params['name'] = params.pop('new_name')
+            params['new_alias'] = True
         return await self._base_resource.update_child(Activity, uuid=uuid, alias=name, **params)
 
     @logging_before_and_after(logger.debug)
@@ -255,8 +259,7 @@ class App(Resource):
     async def append_data_to_data_set(
         self, data: Union[pd.DataFrame, List[Dict]],
         uuid: Optional[str] = None, name: Optional[str] = None,
-        sort: Optional[Dict] = None, dump_whole: bool = False,
-        column_types: Optional[dict] = None
+        sort: Optional[Dict] = None, dump_whole: bool = False
     ) -> Tuple[Mapping, DataSet, Dict]:
         """ Appends data to a dataset. If the dataset doesn't exist, it is created.
         :param uuid: The UUID of the dataset to update.
@@ -264,13 +267,12 @@ class App(Resource):
         :param data: The data to update the dataset with.
         :param sort: The sort to apply to the data.
         :param dump_whole: Whether to dump the whole data.
-        :param column_types: The types of the columns.
         :return: The dataset.
         """
         data_set: DataSet = await self.get_data_set(uuid, name)
         mapping, res_sort = await data_set.create_data_points(
-            data_points=data, sort=sort, dump_whole=dump_whole, column_types=column_types
-        )
+            data_points=data.to_dict(orient='records') if isinstance(data, pd.DataFrame) else data,
+            sort=sort, dump_whole=dump_whole)
         return mapping, data_set, res_sort
 
     @logging_before_and_after(logger.debug)
@@ -313,14 +315,21 @@ class App(Resource):
 
     # File methods
     @logging_before_and_after(logger.debug)
-    async def create_file(self, name: str, file_object: bytes, tags: list, metadata: dict) -> File:
+    async def create_file(
+        self, name: str, file_object: bytes, tags: list, metadata: dict, overwrite: bool = True
+    ) -> File:
         """ Creates a file.
         :param name: The file to create.
         :param file_object: The file object.
         :param tags: The tags of the file.
         :param metadata: The metadata of the file.
+        :param overwrite: Whether to overwrite the file if it already exists.
         :return: The created file.
         """
+        if overwrite and await self._base_resource.get_child(File, alias=name, create_if_not_exists=False):
+            logger.info(f'Overwriting file {name}')
+            await self.delete_file(name=name)
+
         name = await self._base_resource.create_child(
             File, alias=name, contentType='text/csv', tags=tags, metadata=metadata
         )

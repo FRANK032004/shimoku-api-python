@@ -2,7 +2,6 @@ from typing import List, Dict, Optional, Tuple, TYPE_CHECKING, Type
 
 import asyncio
 from copy import deepcopy
-import pandas as pd
 
 from ..base_resource import Resource
 from .data_set import DataSet, Mapping
@@ -27,31 +26,6 @@ class Report(Resource):
     default_properties = {
         'hash': None,
     }
-
-    class ReportEntry(Resource):
-
-        resource_type = 'reportEntry'
-        plural = 'reportEntries'
-
-        @logging_before_and_after(logger.debug)
-        def __init__(self, parent: 'Report', uuid: Optional[str] = None, db_resource: Optional[Dict] = None):
-
-            params = dict(
-                reportId=parent['id'],
-            )
-
-            super().__init__(parent=parent, uuid=uuid, db_resource=db_resource, params=params,
-                             check_params_before_creation=['reportId'], params_to_serialize=['properties'])
-
-        @logging_before_and_after(logger.debug)
-        async def delete(self):
-            """ Delete the report entry """
-            return await self._base_resource.delete()
-
-        @logging_before_and_after(logger.debug)
-        async def update(self):
-            """ Update the report entry """
-            return await self._base_resource.update()
 
     class ReportDataSet(Resource):
 
@@ -102,7 +76,7 @@ class Report(Resource):
         )
 
         super().__init__(parent=parent, uuid=uuid, db_resource=db_resource, params=params,
-                         children=[Report.ReportDataSet, Report.ReportEntry],
+                         children=[Report.ReportDataSet],
                          check_params_before_creation=['order'],
                          params_to_serialize=['properties', 'dataFields', 'chartData', 'bentobox', 'smartFilters'])
 

@@ -20,17 +20,17 @@ class ActivityTemplate(Resource):
     def __init__(self, parent: 'Universe', uuid: Optional[str] = None, alias: Optional[str] = None,
                  db_resource: Optional[Dict] = None):
 
-        params = {
-            'name': alias if alias else '',
-            'version': '',
-            'description': '',
-            'availableModeCost': {},
-            'inputSettings': {},
-            'minRunInterval': 0,
-            'enabled': False,
-            'provider': '',
-            'tags': [],
-        }
+        params = dict(
+            name=alias if alias else '',
+            version='',
+            description='',
+            availableModeCost={},
+            inputSettings={},
+            minRunInterval=0,
+            enabled=False,
+            provider='',
+            tags=[],
+        )
 
         super().__init__(
             parent=parent, uuid=uuid, db_resource=db_resource,

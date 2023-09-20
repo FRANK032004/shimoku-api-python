@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 from ..base_resource import Resource
 from .business import Business
@@ -76,31 +76,20 @@ class Universe(Resource):
     # Activity template methods
     @logging_before_and_after(logger.debug)
     async def get_activity_template(
-        self, uuid: Optional[str] = None, name: Optional[str] = None
+        self, uuid: Optional[str] = None, name_version: Optional[Tuple[str, str]] = None
     ) -> Optional[ActivityTemplate]:
-        return await self._base_resource.get_child(ActivityTemplate, uuid, name)
+        return await self._base_resource.get_child(ActivityTemplate, uuid, name_version)
+
+    @logging_before_and_after(logging_level=logger.debug)
+    def interpret_version(self, version: str):
+        """ Interpret a version string
+        :param version: Version string
+        :return: Version string
+        """
+        return [int(v) for v in version.split('.')]
 
     @logging_before_and_after(logger.debug)
     async def get_activity_templates(self) -> List[ActivityTemplate]:
-        return [ActivityTemplate(parent=self, db_resource={
-            'id': 'test',
-            'name': 'TEST WORKFLOW',
-            'description': 'Test Workflow from data team',
-            'minRunInterval': 30,
-            'enabled': True,
-            'version': '1.0.0',
-            'tags': ['testWorkflow', 'type:test'],
-            'inputSettings': {
-                'test_mandatory': {
-                    'dataType': 'str',
-                    'description': 'Mandatory text added inside the output file',
-                    'mandatory': True
-                },
-                'text_optional': {
-                    'dataType': 'str',
-                    'description': 'Optional text added inside the output file',
-                    'mandatory': False
-                },
-            }
-        })]
-        return await self._base_resource.get_children(ActivityTemplate)
+        templates = await self._base_resource.get_children(ActivityTemplate)
+        return sorted(templates, key=lambda template: [template['name']] + self.interpret_version(template['version']))
+
