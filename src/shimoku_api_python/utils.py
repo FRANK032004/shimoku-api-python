@@ -135,8 +135,38 @@ def convert_data_and_get_series_name(data: pd.DataFrame, field: str) -> Tuple[pd
 
 
 @logging_before_and_after(logging_level=logger.debug)
+def revert_uuids_from_dict(_dict: dict):
+    """ Revert all uuids from a dictionary to the form '#set_data#'. They follow the pattern '#{id}'.
+    :param _dict: dictionary to revert uuids
+    """
+    for k, v in _dict.items():
+        if isinstance(v, dict):
+            revert_uuids_from_dict(v)
+        elif isinstance(v, list):
+            revert_uuids_from_list(v)
+        elif isinstance(v, str) and v.startswith('#{') and v.endswith('}'):
+            _dict[k] = '#set_data#'
+
+
+@logging_before_and_after(logging_level=logger.debug)
+def revert_uuids_from_list(_list: list):
+    """ Revert all uuids from a list to the form '#set_data#'. They follow the pattern '#{id}'.
+    :param _list: list to revert uuids
+    """
+    for i, v in enumerate(_list):
+        if isinstance(v, dict):
+            revert_uuids_from_dict(v)
+        elif isinstance(v, list):
+            revert_uuids_from_list(v)
+        elif isinstance(v, str) and v.startswith('#{') and v.endswith('}'):
+            _list[i] = '#set_data#'
+
+
+@logging_before_and_after(logging_level=logger.debug)
 def get_uuids_from_dict(_dict: dict) -> List[str]:
-    """ Get all uuids from a dictionary. They follow the pattern '#{'id'}'. """
+    """ Get all uuids from a dictionary. They follow the pattern '#{id}'.
+    :param _dict: dictionary to get uuids
+    """
     uuids = []
     for k, v in _dict.items():
         if isinstance(v, dict):
@@ -150,7 +180,10 @@ def get_uuids_from_dict(_dict: dict) -> List[str]:
 
 @logging_before_and_after(logging_level=logger.debug)
 def get_uuids_from_list(_list: list) -> List[str]:
-    """ Get all uuids from a list. They follow the pattern '#{'id'}'. """
+    """ Get all uuids from a list. They follow the pattern '#{id}'.
+    :param _list: list to get uuids
+    :return: list of uuids
+    """
     uuids = []
     for v in _list:
         if isinstance(v, dict):
@@ -165,7 +198,11 @@ def get_uuids_from_list(_list: list) -> List[str]:
 @logging_before_and_after(logging_level=logger.debug)
 def get_data_references_from_dict(_dict: dict, previous_keys: Optional[List[Union[str, int]]] = None) -> \
         List[List[str]]:
-    """ Get all data references from a dictionary. They follow the pattern '#set_data#'. """
+    """ Get all data references from a dictionary. They follow the pattern '#set_data#'.
+    :param _dict: dictionary to get data references
+    :param previous_keys: previous keys
+    :return: list of data references
+    """
     if previous_keys is None:
         previous_keys = []
     entries = []
@@ -180,9 +217,14 @@ def get_data_references_from_dict(_dict: dict, previous_keys: Optional[List[Unio
 
 
 @logging_before_and_after(logging_level=logger.debug)
-def get_data_references_from_list(_list: list, previous_keys: Optional[List[Union[int, str]]] = None
-                                  ) -> List[List[str]]:
-    """ Get all data references from a list. They follow the pattern '#set_data#'. """
+def get_data_references_from_list(
+    _list: list, previous_keys: Optional[List[Union[int, str]]] = None
+) -> List[List[str]]:
+    """ Get all data references from a list. They follow the pattern '#set_data#'.
+    :param _list: list to get data references
+    :param previous_keys: previous keys
+    :return: list of data references
+    """
     if previous_keys is None:
         previous_keys = []
     entries = []
