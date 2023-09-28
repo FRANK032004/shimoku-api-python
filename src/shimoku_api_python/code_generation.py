@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 shared_data_sets = []
+custom_data_sets_with_data = {}
 output_path = ''
+
 
 async def tree_from_tabs_group(
         self: PlotApi, tree: list, tabs_group: TabsGroup, seen_reports: set, parent_tabs_index: Tuple[str, str] = None
@@ -107,10 +109,13 @@ async def generate_tree(self: PlotApi, reports: list[Report]) -> dict:
 
 
 @logging_before_and_after(logger.debug)
-async def check_for_shared_data_sets(self: PlotApi, report: Report, seen_data_sets: set):
+async def check_for_shared_data_sets(
+    self: PlotApi, report: Report, seen_data_sets: set, individual_data_sets: Dict[str, Report]
+):
     """ Check for shared data sets in a report.
     :param report: report to check
     :param seen_data_sets: set of data sets already seen
+    :param individual_data_sets: list of data sets to append to
     """
     report_data_sets: List[Report.ReportDataSet] = await report.get_report_data_sets()
     data_sets_from_rds = set([rds['dataSetId'] for rds in report_data_sets])
@@ -120,7 +125,9 @@ async def check_for_shared_data_sets(self: PlotApi, report: Report, seen_data_se
             continue
         if ds_id in seen_data_sets:
             shared_data_sets.append(ds_id)
+            del individual_data_sets[ds_id]
         else:
+            individual_data_sets[ds_id] = report
             seen_data_sets.add(ds_id)
 
 
@@ -133,15 +140,16 @@ async def get_data_sets(self: PlotApi):
     # To store the data sets in the cache for the reports to have faster access to them
     await self._app.get_data_sets()
 
-    individual_data_sets: List[Tuple[DataSet, Report]] = []
+    individual_data_sets: Dict[str, Report] = {}
     seen_data_sets = set()
 
-    await asyncio.gather(*[check_for_shared_data_sets(self, report, seen_data_sets) for report in reports])
+    await asyncio.gather(*[check_for_shared_data_sets(self, report, seen_data_sets, individual_data_sets)
+                           for report in reports])
 
-    for ds in shared_data_sets:
-        await create_data_set_file(await self._app.get_data_set(ds))
-    for ds, report in individual_data_sets:
-        await create_data_set_file(ds, report)
+    for ds_id in shared_data_sets:
+        await create_data_set_file(await self._app.get_data_set(ds_id))
+    for ds_id, report in individual_data_sets.items():
+        await create_data_set_file(await self._app.get_data_set(ds_id), report)
 
 
 @logging_before_and_after(logger.debug)
@@ -279,16 +287,28 @@ async def code_gen_from_echarts(
     fields = [mapping[1] for mapping in mappings]
     data_set_id, data_set = list(referenced_data_sets.items())[0]
 
-    data_arg = f'pd.read_csv("{output_path}/data/{change_data_set_name_with_report(data_set, report)}.csv")'
     if data_set_id in shared_data_sets:
-        data_arg = f'"{data_set["name"]}"'
+        if data_set_id in custom_data_sets_with_data:
+            return []
+        data_arg = [f'"{data_set["name"]}",']
+    elif data_set_id in custom_data_sets_with_data:
+        return []
+        val = custom_data_sets_with_data[data_set_id]
+        data_arg = code_gen_from_dict(val, 4) if isinstance(val, dict) else code_gen_from_list(val, 4)
+        data_arg[0] = data_arg[0][4:]
+    else:
+        data_arg = [f'pd.read_csv("data/{change_data_set_name_with_report(data_set, report)}.csv"),']
+
+    options_code = code_gen_from_dict(echart_options, 4)
+
     return [
         's.plt.free_echarts(',
         *report_params,
-        f'    data={data_arg},',
+        f'    data={data_arg[0]}',
+        *data_arg[1:],
         f'    fields={fields},',
-        '    options=',
-        *code_gen_from_dict(echart_options, 4),
+        f'    options={options_code[0][4:]}',
+        *options_code[1:],
         ')'
     ]
 
@@ -301,6 +321,7 @@ async def code_gen_from_annotated_echart(
     :param properties: properties of the report
     :return: list of code lines
     """
+    return []
     return [
         's.plt.annotated_chart(',
         *report_params,
@@ -316,6 +337,7 @@ async def code_gen_from_table(
     :param properties: properties of the report
     :return: list of code lines
     """
+    return []
     return [
         's.plt.table(',
         *report_params,
@@ -331,6 +353,7 @@ async def code_gen_from_form(
     :param properties: properties of the report
     :return: list of code lines
     """
+    return []
     return [
         's.plt.input_form(',
         *report_params,
@@ -341,23 +364,29 @@ async def code_gen_from_form(
 
 
 async def code_gen_from_html(
-        self: PlotApi, report: Report, report_params: List[str], chartData: dict
+        self: PlotApi, report: Report
 ) -> List[str]:
     """ Generate code for an html report.
     :param report_params: parameters of the report
     :param chartData: chartData of the report where the html is stored
     :return: list of code lines
     """
-    html = BeautifulSoup(chartData[0]["value"].replace("'", "\\'").replace('"', '\\"'),
-                         "html.parser").prettify().replace("\n", "'\n" + " " * 8 + "'")
-    return [
+    html = BeautifulSoup(report['chartData'][0]["value"].replace("'", "\\'").replace('"', '\\"'),
+                         "html.parser").prettify().replace("\n", "'\n" + " " * 9 + "'")
+    code_lines = [
         's.plt.html(',
-        *report_params,
-        f"    html=(",
-        f"        '{html}'",
-        f"    )",
-        ')'
+        f'    order={report["order"]},',
+        f"    html='{html}',",
     ]
+    if report['sizeColumns'] != 12:
+        code_lines.append(f'    cols_size={report["sizeColumns"]},')
+    if report['sizeRows']:
+        code_lines.append(f'    rows_size={report["sizeRows"]},')
+    if report['sizePadding'] != '0,0,0,0':
+        code_lines.append(f'    padding="{report["sizePadding"]}",')
+    code_lines.append(')')
+
+    return code_lines
 
 
 async def code_gen_from_iframe(
@@ -369,14 +398,14 @@ async def code_gen_from_iframe(
     """
     code_lines = [
         's.plt.iframe(',
-        f'    order="{report["order"]}",',
+        f'    order={report["order"]},',
         f'    url="{report["dataFields"]["url"]}",',
     ]
     if report['dataFields']['height'] != 640:
         code_lines.append(f'    height={report["dataFields"]["height"]},')
-    if report['sizeColumns']:
+    if report['sizeColumns'] != 12:
         code_lines.append(f'    cols_size={report["sizeColumns"]},')
-    if report['sizePadding']:
+    if report['sizePadding'] != '0,0,0,0':
         code_lines.append(f'    padding="{report["sizePadding"]}",')
     code_lines.append(')')
     return code_lines
@@ -412,7 +441,7 @@ async def code_gen_from_other(
     elif report['reportType'] == 'FORM':
         code_lines.extend(await code_gen_from_form(self, report, report_params, properties))
     elif report['reportType'] == 'HTML':
-        code_lines.extend(await code_gen_from_html(self, report, report_params, report['chartData']))
+        code_lines.extend(await code_gen_from_html(self, report))
     elif report['reportType'] == 'IFRAME':
         code_lines.extend(await code_gen_from_iframe(self, report))
     elif report['reportType'] == 'ANNOTATED_ECHART':
@@ -422,39 +451,62 @@ async def code_gen_from_other(
     return code_lines
 
 
-async def code_gen_from_tabs_group(self: PlotApi, tree: dict) -> List[str]:
+async def code_gen_from_tabs_group(
+    self: PlotApi, tree: dict, is_last: bool = False
+) -> List[str]:
     """ Generate code for a tabs group.
     :param tree: tree of reports
-    :param code_lines: list of code lines
+    :param is_last: whether the tabs group is the last one
+    :return: list of code lines
     """
     code_lines = []
     tabs_group: TabsGroup = tree['tabs_group']
+    tabs_index = (tabs_group['properties']['hash'], list(tree['tabs'].keys())[0])
+    parent_tabs_index = tree['parent_tabs_index']
     code_lines.extend([
         '',
         's.plt.set_tabs_index(',
-        f'    tabs_index=("{tabs_group["properties"]["hash"]}", "{list(tree["tabs"].keys())[0]}"), order={tabs_group["order"]}, ',
+        f'    tabs_index=("{tabs_index[0]}", "{tabs_index[1]}"), order={tabs_group["order"]}, ',
     ])
-    if tree['parent_tabs_index']:
-        code_lines.extend([f'    parent_tabs_index={tree["parent_tabs_index"]}'])
+    if parent_tabs_index:
+        code_lines.extend([f'    parent_tabs_index={parent_tabs_index}'])
     code_lines.extend([')'])
 
     for tab in tree['tabs']:
         code_lines.extend(['', f's.plt.change_current_tab("{tab}")'])
-        code_lines.extend(await code_gen_tabs_and_other(self, tree['tabs'][tab]))
+        code_lines.extend(await code_gen_tabs_and_other(self, tree['tabs'][tab],
+                                                        last_tab=tab == list(tree['tabs'])[-1]))
+
+    if parent_tabs_index:
+        if not is_last:
+            code_lines.extend([
+                '',
+                f's.plt.set_tabs_index(("{parent_tabs_index[0]}", "{parent_tabs_index[1]}"))'
+            ])
+
+    else:
+        code_lines.extend(['', 's.plt.pop_out_of_tabs_group()'])
 
     return code_lines
 
 
-async def code_gen_tabs_and_other(self: PlotApi, tree: dict) -> List[str]:
+async def code_gen_tabs_and_other(
+    self: PlotApi, tree: dict, last_tab: bool = False
+) -> List[str]:
     """ Generate code for tabs and other components.
     :param tree: tree of reports
+    :param parent_tabs_index: parent tabs index
     :return: list of code lines
     """
     code_lines: List[str] = []
     components_ordered = sorted(tree['other'] + tree['tabs'], key=lambda x: x['order'])
     for component in components_ordered:
         if isinstance(component, dict):
-            code_lines.extend(await code_gen_from_tabs_group(self, component))
+            code_lines.extend(
+                await code_gen_from_tabs_group(
+                    self, component, is_last=component == components_ordered[-1] and last_tab
+                )
+            )
         else:
             code_lines.extend(await code_gen_from_other(self, component))
     return code_lines
@@ -490,12 +542,19 @@ async def create_data_set_file(data_set: DataSet, report: Optional[Report] = Non
     data: List[dict] = [{k: v for k, v in dp.cascade_to_dict().items()
                          if k not in ['id', 'dataSetId'] and v is not None}
                          for dp in await data_set.get_data_points()]
-    data_as_df = pd.DataFrame(data)
+
     if not os.path.exists(output_path + '/data'):
         os.makedirs(output_path + '/data')
 
-    output_name = data_set["name"] if report is None else change_data_set_name_with_report(data_set, report)
-    data_as_df.to_csv(os.path.join(output_path + '/data', f'{output_name}.csv'), index=False)
+    if len(data) == 0:
+        return
+
+    if len(data) > 1 or 'customField1' not in data[0]:
+        data_as_df = pd.DataFrame(data)
+        output_name = data_set["name"] if report is None else change_data_set_name_with_report(data_set, report)
+        data_as_df.to_csv(os.path.join(output_path + '/data', f'{output_name}.csv'), index=False)
+    else:
+        custom_data_sets_with_data[data_set['id']] = data[0]['customField1']
 
 
 async def code_gen_shared_data_sets(self: PlotApi) -> List[str]:
@@ -507,8 +566,7 @@ async def code_gen_shared_data_sets(self: PlotApi) -> List[str]:
     custom: List[DataSet] = []
     for ds_id in shared_data_sets:
         ds = await self._app.get_data_set(ds_id)
-        df = pd.read_csv(f'{output_path}/data/{ds["name"]}.csv')
-        if 'customField1' in df.columns:
+        if ds_id in custom_data_sets_with_data:
             custom.append(ds)
         else:
             dfs.append(ds)
@@ -518,13 +576,13 @@ async def code_gen_shared_data_sets(self: PlotApi) -> List[str]:
     if len(dfs) > 0:
         code_lines.extend([
             "    dfs={",
-            *[f'        "{ds["name"]}": pd.read_csv("{output_path}/data/{ds["name"]}.csv"),' for ds in dfs],
+            *[f'        "{ds["name"]}": pd.read_csv("data/{ds["name"]}.csv"),' for ds in dfs],
             "    },",
         ])
     if len(custom) > 0:
         code_lines.extend([
             "    custom_data={",
-            *[f'        "{ds["name"]}": pd.read_csv("{output_path}/data/{ds["name"]}.csv")["customField1"],'
+            *[f'        "{ds["name"]}": {custom_data_sets_with_data[ds["id"]]}'
               for ds in custom],
             "    },",
         ])
@@ -569,16 +627,17 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
         'import pandas as pd',
         '',
         's = shimoku.Client(',
-        '    access_token="",',
-        '    universe_id="",',
+        '    access_token="/",',
+        '    universe_id="5c22ba15-c32d-4f4f-9f3d-7c2d331a87a4",',
+        '    async_execution=True,',
         '    verbosity="INFO",',
         ')',
         '',
-        's.set_workspace()',
+        's.set_workspace("34b9c913-ba02-47cf-a9cf-cdefb17f8b03")',
+        f's.set_menu_path("{self._app["name"]}")',
         '',
-        's.set_menu_path()',
+        's.plt.clear_menu_path()',
         '',
-
     ]
     code_lines.extend(await code_gen_shared_data_sets(self))
     for path in reports_tree:
@@ -587,6 +646,11 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
         code_lines.extend(await code_gen_from_reports_tree(self, reports_tree, path))
 
         # print_dict(reports_tree[path])
+    code_lines.extend([
+        '',
+        's.run()',
+        ''
+    ])
 
     # print('\n'.join(code_lines), '\n')
     if file_name is None:
@@ -597,7 +661,7 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
 
 
 s = shimoku.Client(
-    access_token='',
+    access_token='/',
     universe_id='5c22ba15-c32d-4f4f-9f3d-7c2d331a87a4',
     verbosity='INFO',
     environment='local',
