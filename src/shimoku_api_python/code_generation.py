@@ -14,7 +14,7 @@ from shimoku_api_python.resources.report import Report
 from shimoku_api_python.resources.reports.modal import Modal
 from shimoku_api_python.resources.reports.tabs_group import TabsGroup
 from shimoku_api_python.async_execution_pool import async_auto_call_manager
-from shimoku_api_python.utils import revert_uuids_from_dict
+from shimoku_api_python.utils import revert_uuids_from_dict, create_normalized_name
 
 import logging
 from shimoku_api_python.execution_logger import logging_before_and_after, log_error
@@ -25,6 +25,17 @@ logger = logging.getLogger(__name__)
 shared_data_sets = []
 custom_data_sets_with_data = {}
 output_path = ''
+actual_bentobox: Optional[Dict] = None
+
+
+def create_function_name(name: Optional[str]) -> str:
+    """ Create a valid function name from a string
+    :param name: string to create function name from
+    :return: valid function name
+    """
+    if name is None:
+        return 'no_path'
+    return create_normalized_name(name).replace('-', '_')
 
 
 async def tree_from_tabs_group(
@@ -191,6 +202,10 @@ def print_dict(d, deep=0):
     print(' ' * deep, '},')
 
 
+def code_gen_value(v):
+    return v if not isinstance(v, str) else f'"{v}"'
+
+
 def code_gen_from_list(l, deep=0):
     code_lines = [' ' * deep + '[']
     deep += 4
@@ -200,7 +215,7 @@ def code_gen_from_list(l, deep=0):
         elif isinstance(element, list):
             code_lines.extend(code_gen_from_list(element, deep))
         else:
-            code_lines.append(' ' * deep + f'"{str(element)}",')
+            code_lines.append(' ' * deep + f'{code_gen_value(element)},')
     deep -= 4
     code_lines.append(' ' * deep + '],')
     return code_lines
@@ -217,7 +232,7 @@ def code_gen_from_dict(d, deep=0):
             elif isinstance(v, list):
                 code_lines.extend(code_gen_from_list(v, deep))
         else:
-            code_lines.append(' ' * deep + f'"{k}": ' + f'"{str(v)}",')
+            code_lines.append(' ' * deep + f'"{k}": ' + f'{code_gen_value(v)},')
     deep -= 4
     code_lines.append(' ' * deep + '},')
     return code_lines
@@ -243,9 +258,12 @@ def delete_default_properties(properties: dict, default_properties: dict) -> dic
 
 
 async def get_linked_data_set_info(
-        self: PlotApi, report: Report
+        self: PlotApi, report: Report, rds_ids_in_order: List[str]
 ) -> Tuple[Dict[str, DataSet], List[Tuple[str, str]]]:
-    rds: List[Report.ReportDataSet] = await report.get_report_data_sets()
+    unordered_rds: List[Report.ReportDataSet] = await report.get_report_data_sets()
+    rds: List[Report.ReportDataSet] = []
+    for rds_id in rds_ids_in_order:
+        rds.append(next(rd for rd in unordered_rds if rd['id'] == rds_id))
     referenced_data_sets = {d_id: await self._app.get_data_set(d_id) for d_id in set([rd['dataSetId'] for rd in rds])}
     mappings = [(rd['dataSetId'], rd['properties']['mapping']) for rd in rds]
     return referenced_data_sets, mappings
@@ -260,7 +278,7 @@ async def code_gen_from_indicator(
     :return: list of code lines
     """
     return [
-        's.plt.indicator(',
+        'shimoku_client.plt.indicator(',
         *report_params,
         '    data=dict(',
         *[f'        {k}="{v}",' for k, v in properties.items() if v is not None],
@@ -277,9 +295,9 @@ async def code_gen_from_echarts(
     :param properties: properties of the report
     :return: list of code lines
     """
-    referenced_data_sets, mappings = await get_linked_data_set_info(self, report)
     echart_options = deepcopy(properties['option'])
-    revert_uuids_from_dict(echart_options)
+    rds_ids_in_order = revert_uuids_from_dict(echart_options)
+    referenced_data_sets, mappings = await get_linked_data_set_info(self, report, rds_ids_in_order)
     if len(referenced_data_sets) > 1:
         log_error(logger,
                   'Only one data set is supported for the current implementation of the echarts component.',
@@ -292,17 +310,18 @@ async def code_gen_from_echarts(
             return []
         data_arg = [f'"{data_set["name"]}",']
     elif data_set_id in custom_data_sets_with_data:
-        return []
         val = custom_data_sets_with_data[data_set_id]
         data_arg = code_gen_from_dict(val, 4) if isinstance(val, dict) else code_gen_from_list(val, 4)
         data_arg[0] = data_arg[0][4:]
+        data_arg += ['    data_is_not_df=True,']
+        fields = '["data"]'
     else:
         data_arg = [f'pd.read_csv("data/{change_data_set_name_with_report(data_set, report)}.csv"),']
 
     options_code = code_gen_from_dict(echart_options, 4)
 
     return [
-        's.plt.free_echarts(',
+        'shimoku_client.plt.free_echarts(',
         *report_params,
         f'    data={data_arg[0]}',
         *data_arg[1:],
@@ -323,7 +342,7 @@ async def code_gen_from_annotated_echart(
     """
     return []
     return [
-        's.plt.annotated_chart(',
+        'shimoku_client.plt.annotated_chart(',
         *report_params,
         ')'
     ]
@@ -339,7 +358,7 @@ async def code_gen_from_table(
     """
     return []
     return [
-        's.plt.table(',
+        'shimoku_client.plt.table(',
         *report_params,
         ')'
     ]
@@ -355,7 +374,7 @@ async def code_gen_from_form(
     """
     return []
     return [
-        's.plt.input_form(',
+        'shimoku_client.plt.input_form(',
         *report_params,
         # "    options=",
         # *code_gen_from_dict(properties['options'], 4),
@@ -374,7 +393,7 @@ async def code_gen_from_html(
     html = BeautifulSoup(report['chartData'][0]["value"].replace("'", "\\'").replace('"', '\\"'),
                          "html.parser").prettify().replace("\n", "'\n" + " " * 9 + "'")
     code_lines = [
-        's.plt.html(',
+        'shimoku_client.plt.html(',
         f'    order={report["order"]},',
         f"    html='{html}',",
     ]
@@ -389,6 +408,16 @@ async def code_gen_from_html(
     return code_lines
 
 
+async def code_gen_from_button(
+        self: PlotApi, report: Report
+) -> List[str]:
+    """ Generate code for a button report.
+    :param report: report to generate code from
+    :return: list of code lines
+    """
+    return []
+
+
 async def code_gen_from_iframe(
         self: PlotApi, report: Report
 ) -> List[str]:
@@ -397,7 +426,7 @@ async def code_gen_from_iframe(
     :return: list of code lines
     """
     code_lines = [
-        's.plt.iframe(',
+        'shimoku_client.plt.iframe(',
         f'    order={report["order"]},',
         f'    url="{report["dataFields"]["url"]}",',
     ]
@@ -412,12 +441,13 @@ async def code_gen_from_iframe(
 
 
 async def code_gen_from_other(
-        self: PlotApi, report: Report
+        self: PlotApi, report: Report, is_last: bool
 ) -> List[str]:
     """ Generate code for a report that is not a tabs group.
     :param report: report to generate code from
     :return: list of code lines
     """
+    global actual_bentobox
     code_lines = []
 
     properties = delete_default_properties(report['properties'], report.default_properties)
@@ -426,11 +456,24 @@ async def code_gen_from_other(
     report_params_to_get = {
         'order': 'order', 'title': 'title',
         'sizeColumns': 'cols_size', 'sizeRows': 'rows_size',
-        'padding': 'padding',
+        'sizePadding': 'padding',
     }
     report_params = [f'    {report_params_to_get[k]}=' + (f'"{(report[k])}",'
                                                           if isinstance(report[k], str) else f'{report[k]},')
                      for k in report if k in report_params_to_get]
+
+    if len(report['bentobox']):
+        if actual_bentobox is None or actual_bentobox['bentoboxId'] != report['bentobox']['bentoboxId']:
+            actual_bentobox = report['bentobox']
+            cols_size = actual_bentobox['bentoboxSizeColumns']
+            rows_size = actual_bentobox['bentoboxSizeRows']
+            code_lines.extend([
+                '',
+                f'shimoku_client.plt.set_bentobox(cols_size={cols_size}, rows_size={rows_size})'
+            ])
+    elif actual_bentobox is not None:
+        actual_bentobox = None
+        code_lines.append('shimoku_client.plt.pop_out_of_bentobox()')
 
     if report['reportType'] == 'INDICATOR':
         code_lines.extend(await code_gen_from_indicator(self, report, report_params, properties))
@@ -446,8 +489,15 @@ async def code_gen_from_other(
         code_lines.extend(await code_gen_from_iframe(self, report))
     elif report['reportType'] == 'ANNOTATED_ECHART':
         code_lines.extend(await code_gen_from_annotated_echart(self, report, report_params, properties))
+    elif report['reportType'] == 'BUTTON':
+        code_lines.extend(await code_gen_from_button(self, report))
     else:
-        code_lines.extend([f"s.add_report({report['reportType']}, order={report['order']}, data=dict())"])
+        code_lines.extend([f"shimoku_client.add_report({report['reportType']}, order={report['order']}, data=dict())"])
+
+    if is_last and actual_bentobox is not None:
+        actual_bentobox = None
+        code_lines.append('shimoku_client.plt.pop_out_of_bentobox()')
+
     return code_lines
 
 
@@ -463,17 +513,26 @@ async def code_gen_from_tabs_group(
     tabs_group: TabsGroup = tree['tabs_group']
     tabs_index = (tabs_group['properties']['hash'], list(tree['tabs'].keys())[0])
     parent_tabs_index = tree['parent_tabs_index']
+    properties = delete_default_properties(tabs_group['properties'], TabsGroup.default_properties)
+    del properties['hash']
+    if 'tabs' in properties:
+        del properties['tabs']
+    if 'variant' in properties:
+        properties['just_labels'] = True
+        del properties['variant']
+
     code_lines.extend([
         '',
-        's.plt.set_tabs_index(',
+        'shimoku_client.plt.set_tabs_index(',
         f'    tabs_index=("{tabs_index[0]}", "{tabs_index[1]}"), order={tabs_group["order"]}, ',
     ])
     if parent_tabs_index:
-        code_lines.extend([f'    parent_tabs_index={parent_tabs_index}'])
+        code_lines.extend([f'    parent_tabs_index={parent_tabs_index},'])
+    code_lines.extend([f'    {k}={code_gen_value(v)},' for k, v in properties.items()])
     code_lines.extend([')'])
 
     for tab in tree['tabs']:
-        code_lines.extend(['', f's.plt.change_current_tab("{tab}")'])
+        code_lines.extend(['', f'shimoku_client.plt.change_current_tab("{tab}")'])
         code_lines.extend(await code_gen_tabs_and_other(self, tree['tabs'][tab],
                                                         last_tab=tab == list(tree['tabs'])[-1]))
 
@@ -481,11 +540,11 @@ async def code_gen_from_tabs_group(
         if not is_last:
             code_lines.extend([
                 '',
-                f's.plt.set_tabs_index(("{parent_tabs_index[0]}", "{parent_tabs_index[1]}"))'
+                f'shimoku_client.plt.set_tabs_index(("{parent_tabs_index[0]}", "{parent_tabs_index[1]}"))'
             ])
 
     else:
-        code_lines.extend(['', 's.plt.pop_out_of_tabs_group()'])
+        code_lines.extend(['', 'shimoku_client.plt.pop_out_of_tabs_group()'])
 
     return code_lines
 
@@ -500,15 +559,15 @@ async def code_gen_tabs_and_other(
     """
     code_lines: List[str] = []
     components_ordered = sorted(tree['other'] + tree['tabs'], key=lambda x: x['order'])
-    for component in components_ordered:
+    for i, component in enumerate(components_ordered):
         if isinstance(component, dict):
             code_lines.extend(
                 await code_gen_from_tabs_group(
-                    self, component, is_last=component == components_ordered[-1] and last_tab
+                    self, component, is_last=last_tab and i == len(components_ordered) - 1
                 )
             )
         else:
-            code_lines.extend(await code_gen_from_other(self, component))
+            code_lines.extend(await code_gen_from_other(self, component, is_last=i == len(components_ordered) - 1))
     return code_lines
 
 
@@ -519,7 +578,19 @@ async def code_gen_from_modal(self: PlotApi, tree: dict) -> List[str]:
     """
     code_lines = []
     modal: Modal = tree['modal']
-    code_lines.extend(['', f's.plt.set_modal("{modal["properties"]["hash"]}")'])
+    properties = delete_default_properties(modal['properties'], Modal.default_properties)
+    properties['modal_name'] = properties['hash']
+    del properties['hash']
+    if 'reportIds' in properties:
+        del properties['reportIds']
+    if 'open' in properties:
+        del properties['open']
+        properties['open_by_default'] = True
+    code_lines.extend([
+        'shimoku_client.plt.set_modal(',
+        *[f'    {k}={code_gen_value(v)},' for k, v in properties.items()],
+        ')',
+    ])
     code_lines.extend(await code_gen_tabs_and_other(self, tree))
     return code_lines
 
@@ -527,9 +598,16 @@ async def code_gen_from_modal(self: PlotApi, tree: dict) -> List[str]:
 async def code_gen_from_reports_tree(self: PlotApi, tree: dict, path: str) -> List[str]:
     code_lines = []
     for modal in tree[path]['modals']:
-        code_lines.extend(await code_gen_from_modal(self, modal))
+        modal_code_lines = await code_gen_from_modal(self, modal)
+        code_lines.extend([
+            '',
+            f'def modal_{create_function_name(modal["modal"]["properties"]["hash"])}():',
+            *['    ' + line for line in modal_code_lines]
+        ])
+    for modal in tree[path]['modals']:
+        code_lines.extend(['', f'modal_{create_function_name(modal["modal"]["properties"]["hash"])}()'])
     if len(tree[path]['modals']) > 0:
-        code_lines.extend(['', 's.plt.pop_out_of_modal()', ''])
+        code_lines.extend(['', 'shimoku_client.plt.pop_out_of_modal()', ''])
     code_lines.extend(await code_gen_tabs_and_other(self, tree[path]))
     return code_lines
 
@@ -571,7 +649,7 @@ async def code_gen_shared_data_sets(self: PlotApi) -> List[str]:
         else:
             dfs.append(ds)
     if len(dfs) > 0 or len(custom) > 0:
-        code_lines.append("s.plt.set_shared_data(")
+        code_lines.append("shimoku_client.plt.set_shared_data(")
 
     if len(dfs) > 0:
         code_lines.extend([
@@ -580,15 +658,23 @@ async def code_gen_shared_data_sets(self: PlotApi) -> List[str]:
             "    },",
         ])
     if len(custom) > 0:
-        code_lines.extend([
-            "    custom_data={",
-            *[f'        "{ds["name"]}": {custom_data_sets_with_data[ds["id"]]}'
-              for ds in custom],
-            "    },",
-        ])
+        code_lines.append('    custom_data={')
+        for ds in custom:
+            custom_data = custom_data_sets_with_data[ds["id"]]
+            if isinstance(custom_data, dict):
+                custom_data = code_gen_from_dict(custom_data, 8)
+            else:
+                custom_data = code_gen_from_list(custom_data, 8)
+
+            code_lines.extend([
+                f'        "{ds["name"]}": {custom_data[0][8:]}',
+                *custom_data[1:],
+            ])
+        code_lines.append('    },')
 
     if len(dfs) > 0 or len(custom) > 0:
         code_lines.append(")")
+        code_lines = [''] + code_lines
 
     return code_lines
 
@@ -625,30 +711,48 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
     code_lines = [
         'import shimoku_api_python as shimoku',
         'import pandas as pd',
-        '',
-        's = shimoku.Client(',
+    ]
+    shared_data_sets_code_lines = await code_gen_shared_data_sets(self)
+    for path in reports_tree:
+        code_lines.extend([
+            '',
+            '',
+            f'def {create_function_name(path)}(shimoku_client: shimoku.Client):',
+        ])
+        function_code_lines = []
+        function_code_lines.extend(
+            [f'shimoku_client.set_menu_path("{self._app["name"]}"' + (f', "{path}")' if path is not None else ')')])
+        function_code_lines.extend(await code_gen_from_reports_tree(self, reports_tree, path))
+        code_lines.extend(['    ' + line for line in function_code_lines])
+        # print_dict(reports_tree[path])
+
+    function_calls_code_lines = [f'{create_function_name(path)}(shimoku_client)' for path in reports_tree]
+    main_code_lines = [
+        'shimoku_client = shimoku.Client(',
         '    access_token="/",',
         '    universe_id="5c22ba15-c32d-4f4f-9f3d-7c2d331a87a4",',
         '    async_execution=True,',
         '    verbosity="INFO",',
         ')',
+        'shimoku_client.set_workspace("34b9c913-ba02-47cf-a9cf-cdefb17f8b03")',
+        f'shimoku_client.set_menu_path("{self._app["name"]}")',
+        *shared_data_sets_code_lines,
         '',
-        's.set_workspace("34b9c913-ba02-47cf-a9cf-cdefb17f8b03")',
-        f's.set_menu_path("{self._app["name"]}")',
+        'shimoku_client.plt.clear_menu_path()',
         '',
-        's.plt.clear_menu_path()',
+        *function_calls_code_lines,
         '',
+        'shimoku_client.run()',
     ]
-    code_lines.extend(await code_gen_shared_data_sets(self))
-    for path in reports_tree:
-        code_lines.extend(
-            ['', f's.set_menu_path("{self._app["name"]}"' + (f', "{path}")' if path is not None else ')')])
-        code_lines.extend(await code_gen_from_reports_tree(self, reports_tree, path))
-
-        # print_dict(reports_tree[path])
     code_lines.extend([
         '',
-        's.run()',
+        '',
+        'def main():',
+        *['    ' + line for line in main_code_lines],
+        '',
+        '',
+        'if __name__ == "__main__":',
+        '    main()',
         ''
     ])
 
@@ -670,7 +774,7 @@ s = shimoku.Client(
 )
 s.set_workspace('34b9c913-ba02-47cf-a9cf-cdefb17f8b03')
 print([app['name'] for app in s.workspaces.get_workspace_menu_paths(s.workspace_id)])
-s.set_menu_path('test')
+s.set_menu_path('Modal Test')
 
 output_path = 'generated_code'
 generate_code(s.plt)

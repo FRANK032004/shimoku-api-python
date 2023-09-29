@@ -135,31 +135,39 @@ def convert_data_and_get_series_name(data: pd.DataFrame, field: str) -> Tuple[pd
 
 
 @logging_before_and_after(logging_level=logger.debug)
-def revert_uuids_from_dict(_dict: dict):
+def revert_uuids_from_dict(_dict: dict) -> List[str]:
     """ Revert all uuids from a dictionary to the form '#set_data#'. They follow the pattern '#{id}'.
     :param _dict: dictionary to revert uuids
+    :return: list of uuids in order
     """
+    uuids = []
     for k, v in _dict.items():
         if isinstance(v, dict):
-            revert_uuids_from_dict(v)
+            uuids.extend(revert_uuids_from_dict(v))
         elif isinstance(v, list):
-            revert_uuids_from_list(v)
+            uuids.extend(revert_uuids_from_list(v))
         elif isinstance(v, str) and v.startswith('#{') and v.endswith('}'):
+            uuids.append(v[2:-1])
             _dict[k] = '#set_data#'
+    return uuids
 
 
 @logging_before_and_after(logging_level=logger.debug)
-def revert_uuids_from_list(_list: list):
+def revert_uuids_from_list(_list: list) -> List[str]:
     """ Revert all uuids from a list to the form '#set_data#'. They follow the pattern '#{id}'.
     :param _list: list to revert uuids
+    :return: list of uuids in order
     """
+    uuids = []
     for i, v in enumerate(_list):
         if isinstance(v, dict):
-            revert_uuids_from_dict(v)
+            uuids.extend(revert_uuids_from_dict(v))
         elif isinstance(v, list):
-            revert_uuids_from_list(v)
+            uuids.extend(revert_uuids_from_list(v))
         elif isinstance(v, str) and v.startswith('#{') and v.endswith('}'):
+            uuids.append(v[2:-1])
             _list[i] = '#set_data#'
+    return uuids
 
 
 @logging_before_and_after(logging_level=logger.debug)

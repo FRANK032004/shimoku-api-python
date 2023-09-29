@@ -1636,6 +1636,7 @@ class PlotApi:
             cols_size: Optional[int] = None,
             padding: Optional[str] = None,
             fields: Optional[List] = None,
+            data_is_not_df: bool = False,
     ):
         if not options and not raw_options:
             log_error(logger, 'Either options or raw_options must be provided', ValueError)
@@ -1653,7 +1654,7 @@ class PlotApi:
             options = deepcopy(options)
 
         await self._create_echart(
-            order=order, data_mapping_to_tuples=await self._choose_data(order, data),
+            order=order, data_mapping_to_tuples=await self._choose_data(order, data, dump_whole=data_is_not_df),
             fields=fields, options=options, title=title,
             rows_size=rows_size, cols_size=cols_size, padding=padding
         )
