@@ -26,6 +26,10 @@ shared_data_sets = []
 custom_data_sets_with_data = {}
 output_path = ''
 actual_bentobox: Optional[Dict] = None
+all_tab_groups: Dict[str, List[dict]] = {}
+imports_code_lines = [
+    'import shimoku_api_python as shimoku',
+]
 
 
 def create_function_name(name: Optional[str]) -> str:
@@ -35,6 +39,9 @@ def create_function_name(name: Optional[str]) -> str:
     """
     if name is None:
         return 'no_path'
+    #Change Uppercase to '_' + lowercase if previous character is in abecedary
+    name = ''.join(['_' + c.lower() if c.isupper() and i > 0 and name[i - 1].isalpha() else c
+                    for i, c in enumerate(name)])
     return create_normalized_name(name).replace('-', '_')
 
 
@@ -50,21 +57,28 @@ async def tree_from_tabs_group(
     """
     tabs_group_dict = {'tabs_group': tabs_group, 'tabs': {}, 'order': tabs_group['order'],
                        'parent_tabs_index': parent_tabs_index}
+
+    path = tabs_group['path']
+    if path not in all_tab_groups:
+        all_tab_groups[path] = []
+    all_tab_groups[path].insert(0, tabs_group_dict)
+
     tree.append(tabs_group_dict)
     tabs = sorted(tabs_group['properties']['tabs'].items(), key=lambda x: x[1]['order'])
     for tab, tab_data in tabs:
         report_ids = tab_data['reportIds']
-        tab_dict = {'tabs': [], 'other': []}
+        tab_dict = {'tab_groups': [], 'other': []}
         tabs_group_dict['tabs'][tab] = tab_dict
         for child_id in report_ids:
             seen_reports.add(child_id)
             child_report = await self._app.get_report(child_id)
             if child_report['reportType'] == 'TABS':
                 await tree_from_tabs_group(
-                    self, tab_dict['tabs'], child_report, seen_reports, (tabs_group['properties']['hash'], tab))
+                    self, tab_dict['tab_groups'], child_report, seen_reports,
+                    (tabs_group['properties']['hash'], tab))
             else:
                 tab_dict['other'].append(child_report)
-        tab_dict['tabs'] = sorted(tab_dict['tabs'], key=lambda x: x['tabs_group']['order'])
+        tab_dict['tab_groups'] = sorted(tab_dict['tab_groups'], key=lambda x: x['tabs_group']['order'])
         tab_dict['other'] = sorted(tab_dict['other'], key=lambda x: x['order'])
 
 
@@ -75,16 +89,16 @@ async def tree_from_modal(self: PlotApi, tree: list, modal: Modal, seen_reports:
     :param modal: modal to build tree from
     :param seen_reports: set of report ids that have already been seen
     """
-    modal_dict = {'modal': modal, 'tabs': [], 'other': []}
+    modal_dict = {'modal': modal, 'tab_groups': [], 'other': []}
     tree.append(modal_dict)
     for child_id in modal['properties']['reportIds']:
         seen_reports.add(child_id)
         child_report = await self._app.get_report(child_id)
         if child_report['reportType'] == 'TABS':
-            await tree_from_tabs_group(self, modal_dict['tabs'], child_report, seen_reports)
+            await tree_from_tabs_group(self, modal_dict['tab_groups'], child_report, seen_reports)
         else:
             modal_dict['other'].append(child_report)
-    modal_dict['tabs'] = sorted(modal_dict['tabs'], key=lambda x: x['tabs_group']['order'])
+    modal_dict['tab_groups'] = sorted(modal_dict['tab_groups'], key=lambda x: x['tabs_group']['order'])
     modal_dict['other'] = sorted(modal_dict['other'], key=lambda x: x['order'])
 
 
@@ -94,25 +108,29 @@ async def generate_tree(self: PlotApi, reports: list[Report]) -> dict:
     :param reports: list of reports to build tree from
     :return: tree of reports
     """
+    global all_tab_groups
     reports_tree = {}
     seen_reports = set()
     for report in reports:
+
         if report['id'] in seen_reports:
             continue
 
         if report['path'] not in reports_tree:
-            reports_tree[report['path']] = {'modals': [], 'tabs': [], 'other': []}
+            reports_tree[report['path']] = {'modals': [], 'tab_groups': [], 'other': []}
 
         if report['reportType'] == 'MODAL':
             await tree_from_modal(self, reports_tree[report['path']]['modals'], report, seen_reports)
         elif report['reportType'] == 'TABS':
-            await tree_from_tabs_group(self, reports_tree[report['path']]['tabs'], report, seen_reports)
+            await tree_from_tabs_group(self, reports_tree[report['path']]['tab_groups'], report, seen_reports)
         else:
             reports_tree[report['path']]['other'].append(report)
 
     for path in reports_tree:
         reports_tree[path]['other'] = sorted(reports_tree[path]['other'], key=lambda x: x['order'])
-        reports_tree[path]['tabs'] = sorted(reports_tree[path]['tabs'], key=lambda x: x['tabs_group']['order'])
+        reports_tree[path]['tab_groups'] = sorted(reports_tree[path]['tab_groups'],
+            key=lambda x: x['tabs_group']['order'])
+
     # Todo: Solve path ordering
     # reports_tree = {k: v for k, v in sorted(reports.items(), key=lambda item: }
 
@@ -158,9 +176,9 @@ async def get_data_sets(self: PlotApi):
                            for report in reports])
 
     for ds_id in shared_data_sets:
-        await create_data_set_file(await self._app.get_data_set(ds_id))
+        await create_data_set_file(self, await self._app.get_data_set(ds_id))
     for ds_id, report in individual_data_sets.items():
-        await create_data_set_file(await self._app.get_data_set(ds_id), report)
+        await create_data_set_file(self, await self._app.get_data_set(ds_id), report)
 
 
 @logging_before_and_after(logger.debug)
@@ -340,7 +358,7 @@ async def code_gen_from_annotated_echart(
     :param properties: properties of the report
     :return: list of code lines
     """
-    return []
+    return ['pass']
     return [
         'shimoku_client.plt.annotated_chart(',
         *report_params,
@@ -356,7 +374,7 @@ async def code_gen_from_table(
     :param properties: properties of the report
     :return: list of code lines
     """
-    return []
+    return ['pass']
     return [
         'shimoku_client.plt.table(',
         *report_params,
@@ -372,7 +390,7 @@ async def code_gen_from_form(
     :param properties: properties of the report
     :return: list of code lines
     """
-    return []
+    return ['pass']
     return [
         'shimoku_client.plt.input_form(',
         *report_params,
@@ -521,6 +539,12 @@ async def code_gen_from_tabs_group(
         properties['just_labels'] = True
         del properties['variant']
 
+    for tab in tree['tabs']:
+        code_lines.extend(['', f'def tab_{create_function_name(tabs_index[0])}_{create_function_name(tab)}():'])
+        # tab_code = await code_gen_tabs_functions(self, tree['tabs'][tab]['tab_groups'])
+        tab_code = await code_gen_tabs_and_other(self, tree['tabs'][tab])
+        code_lines.extend([f'    {line}' for line in tab_code])
+
     code_lines.extend([
         '',
         'shimoku_client.plt.set_tabs_index(',
@@ -533,8 +557,7 @@ async def code_gen_from_tabs_group(
 
     for tab in tree['tabs']:
         code_lines.extend(['', f'shimoku_client.plt.change_current_tab("{tab}")'])
-        code_lines.extend(await code_gen_tabs_and_other(self, tree['tabs'][tab],
-                                                        last_tab=tab == list(tree['tabs'])[-1]))
+        code_lines.extend([f'tab_{create_function_name(tabs_index[0])}_{create_function_name(tab)}()'])
 
     if parent_tabs_index:
         if not is_last:
@@ -549,8 +572,20 @@ async def code_gen_from_tabs_group(
     return code_lines
 
 
+async def code_gen_tabs_functions(self: PlotApi, tab_groups: List[dict]) -> List[str]:
+    code_lines = []
+    for tabs_group in tab_groups:
+        tab_code_lines = await code_gen_from_tabs_group(self, tabs_group)
+        code_lines.extend([
+            '',
+            f'def tabs_group_{create_function_name(tabs_group["tabs_group"]["properties"]["hash"])}():',
+            *['    ' + line for line in tab_code_lines]
+        ])
+    return code_lines
+
+
 async def code_gen_tabs_and_other(
-    self: PlotApi, tree: dict, last_tab: bool = False
+    self: PlotApi, tree: dict
 ) -> List[str]:
     """ Generate code for tabs and other components.
     :param tree: tree of reports
@@ -558,13 +593,12 @@ async def code_gen_tabs_and_other(
     :return: list of code lines
     """
     code_lines: List[str] = []
-    components_ordered = sorted(tree['other'] + tree['tabs'], key=lambda x: x['order'])
+    components_ordered = sorted(tree['other'] + tree['tab_groups'], key=lambda x: x['order'])
     for i, component in enumerate(components_ordered):
         if isinstance(component, dict):
-            code_lines.extend(
-                await code_gen_from_tabs_group(
-                    self, component, is_last=last_tab and i == len(components_ordered) - 1
-                )
+            code_lines.extend([
+                '',
+                f'tabs_group_{create_function_name(component["tabs_group"]["properties"]["hash"])}()']
             )
         else:
             code_lines.extend(await code_gen_from_other(self, component, is_last=i == len(components_ordered) - 1))
@@ -576,6 +610,7 @@ async def code_gen_from_modal(self: PlotApi, tree: dict) -> List[str]:
     :param tree: tree of reports
     :return: list of code lines
     """
+    # code_lines = (await code_gen_tabs_functions(self, tree['tab_groups']))
     code_lines = []
     modal: Modal = tree['modal']
     properties = delete_default_properties(modal['properties'], Modal.default_properties)
@@ -595,15 +630,23 @@ async def code_gen_from_modal(self: PlotApi, tree: dict) -> List[str]:
     return code_lines
 
 
-async def code_gen_from_reports_tree(self: PlotApi, tree: dict, path: str) -> List[str]:
+async def code_gen_modals_functions(self: PlotApi, modals: List[dict]) -> List[str]:
     code_lines = []
-    for modal in tree[path]['modals']:
+    for modal in modals:
         modal_code_lines = await code_gen_from_modal(self, modal)
         code_lines.extend([
             '',
             f'def modal_{create_function_name(modal["modal"]["properties"]["hash"])}():',
             *['    ' + line for line in modal_code_lines]
         ])
+    return code_lines
+
+
+async def code_gen_from_reports_tree(self: PlotApi, tree: dict, path: str) -> List[str]:
+    code_lines = [
+        *(await code_gen_tabs_functions(self, all_tab_groups[path]) if path in all_tab_groups else []),
+        *(await code_gen_modals_functions(self, tree[path]['modals']) if path in tree else []),
+    ]
     for modal in tree[path]['modals']:
         code_lines.extend(['', f'modal_{create_function_name(modal["modal"]["properties"]["hash"])}()'])
     if len(tree[path]['modals']) > 0:
@@ -612,7 +655,7 @@ async def code_gen_from_reports_tree(self: PlotApi, tree: dict, path: str) -> Li
     return code_lines
 
 
-async def create_data_set_file(data_set: DataSet, report: Optional[Report] = None):
+async def create_data_set_file(self: PlotApi, data_set: DataSet, report: Optional[Report] = None):
     """ Create a file for a data set.
     :param data_set: data set to create file for
     :param report: report to create file for
@@ -621,8 +664,9 @@ async def create_data_set_file(data_set: DataSet, report: Optional[Report] = Non
                          if k not in ['id', 'dataSetId'] and v is not None}
                          for dp in await data_set.get_data_points()]
 
-    if not os.path.exists(output_path + '/data'):
-        os.makedirs(output_path + '/data')
+    menu_path = create_function_name(self._app['name'])
+    if not os.path.exists(f'{output_path}/{menu_path}/data'):
+        os.makedirs(f'{output_path}/{menu_path}/data')
 
     if len(data) == 0:
         return
@@ -630,7 +674,9 @@ async def create_data_set_file(data_set: DataSet, report: Optional[Report] = Non
     if len(data) > 1 or 'customField1' not in data[0]:
         data_as_df = pd.DataFrame(data)
         output_name = data_set["name"] if report is None else change_data_set_name_with_report(data_set, report)
-        data_as_df.to_csv(os.path.join(output_path + '/data', f'{output_name}.csv'), index=False)
+        data_as_df.to_csv(os.path.join(f'{output_path}/{menu_path}/data', f'{output_name}.csv'), index=False)
+        if 'import pandas as pd' not in imports_code_lines:
+            imports_code_lines.append('import pandas as pd')
     else:
         custom_data_sets_with_data[data_set['id']] = data[0]['customField1']
 
@@ -694,6 +740,10 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
         '_' + x['properties']['hash']
     )
 
+    menu_path: str = create_function_name(self._app['name'])
+    if not os.path.exists(f'{output_path}/{menu_path}'):
+        os.makedirs(f'{output_path}/{menu_path}')
+
     # print(str(self._app), [(t, self._app[t]) for t in self._app])
     reports_tree = await generate_tree(self, reports)
     await get_data_sets(self)
@@ -705,28 +755,37 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
     #     reports_per_type[report['reportType']].append(report)
     #     print(str(report), [(t, report[t]) for t in report])
     # print_dict(reports_tree)
-    print('CODE:')
     code_lines: List[str] = []
-    # TODO: Put on external function
-    code_lines = [
-        'import shimoku_api_python as shimoku',
-        'import pandas as pd',
-    ]
+
     shared_data_sets_code_lines = await code_gen_shared_data_sets(self)
     for path in reports_tree:
-        code_lines.extend([
+        function_code_lines = await code_gen_from_reports_tree(self, reports_tree, path)
+
+        script_code_lines = [
+            *imports_code_lines,
+            # *await code_gen_tabs_functions(self, all_tab_groups[path]),
+            # *await code_gen_modals_functions(self, reports_tree[path]['modals']),
             '',
             '',
             f'def {create_function_name(path)}(shimoku_client: shimoku.Client):',
-        ])
-        function_code_lines = []
-        function_code_lines.extend(
-            [f'shimoku_client.set_menu_path("{self._app["name"]}"' + (f', "{path}")' if path is not None else ')')])
-        function_code_lines.extend(await code_gen_from_reports_tree(self, reports_tree, path))
-        code_lines.extend(['    ' + line for line in function_code_lines])
-        # print_dict(reports_tree[path])
+            *['    ' + line for line in function_code_lines],
+            '',
+        ]
 
-    function_calls_code_lines = [f'{create_function_name(path)}(shimoku_client)' for path in reports_tree]
+        script_name = create_function_name(path)
+        with open(os.path.join(output_path, menu_path, script_name + '.py'), 'w') as f:
+            f.write('\n'.join(script_code_lines))
+
+    function_calls_code_lines = []
+    for path in reports_tree:
+        script_name = path if path else 'no_path'
+        function_calls_code_lines.extend([
+            '',
+            f'shimoku_client.set_menu_path("{self._app["name"]}"' + (f', "{path}")' if path is not None else ')'),
+            f'{create_function_name(path)}(shimoku_client)'
+        ])
+        imports_code_lines.extend([f'from {create_function_name(script_name)} import {create_function_name(path)}'])
+
     main_code_lines = [
         'shimoku_client = shimoku.Client(',
         '    access_token="/",',
@@ -736,15 +795,15 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
         ')',
         'shimoku_client.set_workspace("34b9c913-ba02-47cf-a9cf-cdefb17f8b03")',
         f'shimoku_client.set_menu_path("{self._app["name"]}")',
-        *shared_data_sets_code_lines,
-        '',
         'shimoku_client.plt.clear_menu_path()',
-        '',
+        *shared_data_sets_code_lines,
         *function_calls_code_lines,
         '',
         'shimoku_client.run()',
     ]
+
     code_lines.extend([
+        *imports_code_lines,
         '',
         '',
         'def main():',
@@ -756,11 +815,7 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
         ''
     ])
 
-    # print('\n'.join(code_lines), '\n')
-    if file_name is None:
-        file_name = self._app['name']
-
-    with open(os.path.join(output_path, file_name + '.py'), 'w') as f:
+    with open(os.path.join(output_path, menu_path, 'main.py'), 'w') as f:
         f.write('\n'.join(code_lines))
 
 
@@ -774,7 +829,7 @@ s = shimoku.Client(
 )
 s.set_workspace('34b9c913-ba02-47cf-a9cf-cdefb17f8b03')
 print([app['name'] for app in s.workspaces.get_workspace_menu_paths(s.workspace_id)])
-s.set_menu_path('Modal Test')
+s.set_menu_path('test-free-echarts')
 
 output_path = 'generated_code'
 generate_code(s.plt)
