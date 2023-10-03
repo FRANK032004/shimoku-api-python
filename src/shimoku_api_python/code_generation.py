@@ -32,6 +32,14 @@ imports_code_lines = [
 ]
 
 
+def check_correct_character(character: str) -> bool:
+    """ Check if a character is valid for a function name
+    :param character: character to check
+    :return: True if character is valid, False otherwise
+    """
+    return character.isalnum() or character in ['_', '-', ' ']
+
+
 def create_function_name(name: Optional[str]) -> str:
     """ Create a valid function name from a string
     :param name: string to create function name from
@@ -41,7 +49,7 @@ def create_function_name(name: Optional[str]) -> str:
         return 'no_path'
     #Change Uppercase to '_' + lowercase if previous character is in abecedary
     name = ''.join(['_' + c.lower() if c.isupper() and i > 0 and name[i - 1].isalpha() else c
-                    for i, c in enumerate(name)])
+                    for i, c in enumerate(name) if check_correct_character(c)])
     return create_normalized_name(name).replace('-', '_')
 
 
@@ -221,7 +229,24 @@ def print_dict(d, deep=0):
 
 
 def code_gen_value(v):
-    return v if not isinstance(v, str) else f'"{v}"'
+    if isinstance(v, str):
+        special_chars = [
+            '"', "'", '\\', '\n', '\t', '\r', '\b', '\f', '\v',
+            '\a', '\0', '\1', '\2', '\3', '\4', '\5', '\6', '\7'
+        ]
+        replacement_chars = [
+            '\"', "\'", '\\\\', '\\n', '\\t', '\\r', '\\b', '\\f', '\\v',
+            '\\a', '\\0', '\\1', '\\2', '\\3', '\\4', '\\5', '\\6', '\\7'
+        ]
+        result = ''
+        for char in v:
+            if char in special_chars:
+                result += replacement_chars[special_chars.index(char)]
+            else:
+                result += char
+        print(result) if any(char in special_chars for char in v) else None
+        return f'"{result}"'
+    return v
 
 
 def code_gen_from_list(l, deep=0):
@@ -321,8 +346,9 @@ async def code_gen_from_echarts(
                   'Only one data set is supported for the current implementation of the echarts component.',
                   RuntimeError)
     fields = [mapping[1] for mapping in mappings]
-    data_set_id, data_set = list(referenced_data_sets.items())[0]
+    data_set_id, data_set = list(referenced_data_sets.items())[0] if len(referenced_data_sets) > 0 else (None, None)
 
+    data_arg = ['[{}],']
     if data_set_id in shared_data_sets:
         if data_set_id in custom_data_sets_with_data:
             return []
@@ -333,7 +359,7 @@ async def code_gen_from_echarts(
         data_arg[0] = data_arg[0][4:]
         data_arg += ['    data_is_not_df=True,']
         fields = '["data"]'
-    else:
+    elif data_set is not None:
         data_arg = [f'pd.read_csv("data/{change_data_set_name_with_report(data_set, report)}.csv"),']
 
     options_code = code_gen_from_dict(echart_options, 4)
@@ -408,8 +434,10 @@ async def code_gen_from_html(
     :param chartData: chartData of the report where the html is stored
     :return: list of code lines
     """
-    html = BeautifulSoup(report['chartData'][0]["value"].replace("'", "\\'").replace('"', '\\"'),
-                         "html.parser").prettify().replace("\n", "'\n" + " " * 9 + "'")
+    # TODO: The resilt of this proces doesnt result in the same html as the one in the report
+    # html = BeautifulSoup(report['chartData'][0]["value"].replace("'", "\\'").replace('"', '\\"'),
+    #                      "html.parser").prettify().replace("\n", "'\n" + " " * 9 + "'")
+    html = report['chartData'][0]["value"].replace("'", "\\'").replace('"', '\\"')
     code_lines = [
         'shimoku_client.plt.html(',
         f'    order={report["order"]},',
@@ -825,11 +853,11 @@ s = shimoku.Client(
     verbosity='INFO',
     environment='local',
     async_execution=True,
-    local_port=8080,
+    local_port=8000,
 )
 s.set_workspace('34b9c913-ba02-47cf-a9cf-cdefb17f8b03')
 print([app['name'] for app in s.workspaces.get_workspace_menu_paths(s.workspace_id)])
-s.set_menu_path('test-free-echarts')
+s.set_menu_path('Food')
 
 output_path = 'generated_code'
 generate_code(s.plt)
