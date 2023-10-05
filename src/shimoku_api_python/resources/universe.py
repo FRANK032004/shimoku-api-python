@@ -91,5 +91,7 @@ class Universe(Resource):
     @logging_before_and_after(logger.debug)
     async def get_activity_templates(self) -> List[ActivityTemplate]:
         templates = await self._base_resource.get_children(ActivityTemplate)
-        return sorted(templates, key=lambda template: [template['name']] + self.interpret_version(template['version']))
+        for template in templates:
+            template['version'] = template['version'] if template['version'] else '0.0.0'
+        return sorted(templates, key=lambda t: [t['name']] + self.interpret_version(t['version']))
 

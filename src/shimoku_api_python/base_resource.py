@@ -62,7 +62,7 @@ class ResourceCache:
             endpoint: str = f'{self._parent["base_url"]}{self._parent.resource_type}/' \
                             f'{self._parent["id"]}/{self._resource_plural}'
 
-            if self._resource_class.resource_type == 'activityTemplate':
+            if self._resource_class.resource_type == 'activityTemplate' and None:
                 resources_raw = {'items': [{
                     'id': 'test1',
                     'name': 'TEST WORKFLOW',

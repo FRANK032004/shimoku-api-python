@@ -27,7 +27,7 @@ class FileMetadataApi:
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    async def delete_file(self, uuid: Optional[str] = None,  file_name: Optional[str] = None):
+    async def delete_file(self, uuid: Optional[str] = None, file_name: Optional[str] = None):
         """ Delete a file
         :param uuid: uuid of the file
         :param file_name: name of the file
@@ -62,7 +62,7 @@ class FileMetadataApi:
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def get_object(
-        self, uuid: Optional[str] = None,  file_name: Optional[str] = None,
+        self, uuid: Optional[str] = None, file_name: Optional[str] = None,
     ) -> bytes:
         """ Get an object
         :param file_name: name of the file

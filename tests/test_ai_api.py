@@ -45,7 +45,7 @@ def test_create_model():
 
 def test_create_output_file():
     len_files = len(s.menu_paths.get_menu_path_files(name=menu_path))
-    s.ai.create_output_files(files=[{'file1': b'', 'file2': b''}], workflow=workflow_to_test, model_name=model_name)
+    s.ai.create_output_files(files=[{'file1': b'', 'file2': b''}], creator_workflow=workflow_to_test, model_name=model_name)
     assert len(s.menu_paths.get_menu_path_files(name=menu_path)) == len_files
     assert len(s.menu_paths.get_menu_path_files(name=menu_path, with_shimoku_generated=True)) == len_files + 2
 
