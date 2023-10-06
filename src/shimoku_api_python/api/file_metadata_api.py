@@ -6,10 +6,12 @@ import pickle
 import asyncio
 
 import pandas as pd
+from shimoku_api_python.resources.file import File
 from shimoku_api_python.async_execution_pool import async_auto_call_manager, ExecutionPoolContext
+from shimoku_api_python.exceptions import ShimokuFileError
 
 import logging
-from shimoku_api_python.execution_logger import logging_before_and_after
+from shimoku_api_python.execution_logger import logging_before_and_after, log_error
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -25,13 +27,40 @@ class FileMetadataApi:
         self._app = app
         self.epc = execution_pool_context
 
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _check_for_shimoku_generated_create(self, file_name: str):
+        """ Check if a file is shimoku generated, if it is, raise an error
+        :param file_name: name of the file
+        """
+        file: File = await self._app.get_file(name=file_name)
+        if file is not None and 'shimoku_generated' in file['tags']:
+            log_error(logger, f'File {file_name} is shimoku generated, you cannot overwrite it', ShimokuFileError)
+
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _check_for_shimoku_generated_delete(self, file_name: str, with_shimoku_generated: bool = False):
+        """ Check if a file is shimoku generated, if it is, raise an error
+        :param file_name: name of the file
+        :param with_shimoku_generated: if True, allow to delete a file with the tag 'shimoku_generated'
+        """
+        file: File = await self._app.get_file(name=file_name)
+        if file is not None:
+            log_error(logger, f'File {file_name} not found', ShimokuFileError)
+        if file is not None and 'shimoku_generated' in file['tags'] and not with_shimoku_generated:
+            log_error(logger, f'File {file_name} is shimoku generated, if you are sure you want to delete it, '
+                              f'please set with_shimoku_generated to True', ShimokuFileError)
+
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    async def delete_file(self, uuid: Optional[str] = None, file_name: Optional[str] = None):
+    async def delete_file(
+        self, uuid: Optional[str] = None, file_name: Optional[str] = None,
+        with_shimoku_generated: bool = False
+    ):
         """ Delete a file
         :param uuid: uuid of the file
         :param file_name: name of the file
+        :param with_shimoku_generated: if True, allow to delete a file with the tag 'shimoku_generated'
         """
+        await self._check_for_shimoku_generated_delete(file_name, with_shimoku_generated)
         await self._app.delete_file(uuid=uuid, name=file_name)
 
     @async_auto_call_manager(execute=True)
@@ -57,6 +86,7 @@ class FileMetadataApi:
         :param tags: tags to be added to the file
         :param metadata: metadata to be added to the file
         """
+        await self._check_for_shimoku_generated_create(file_name)
         await self._app.create_file(name=file_name, file_object=obj, tags=tags, metadata=metadata, overwrite=overwrite)
 
     @async_auto_call_manager(execute=True)
@@ -85,6 +115,7 @@ class FileMetadataApi:
         :param metadata: metadata to be added to the file
         :return: object
         """
+        await self._check_for_shimoku_generated_create(file_name)
         dataframe_binary: bytes = df.to_csv(index=False).encode('utf-8')
         await self._app.create_file(
             name=file_name, file_object=dataframe_binary, tags=tags, metadata=metadata, overwrite=overwrite
@@ -120,14 +151,17 @@ class FileMetadataApi:
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def deleted_batched_dataframe(
-        self, file_name: str
+        self, file_name: str, with_shimoku_generated: bool = False
     ):
         """ Delete a batched dataframe
         :param file_name: name of the file
+        :param with_shimoku_generated: if True, allow to delete a file with the tag 'shimoku_generated'
         """
+
         files = await self._app.get_files()
         files = [file for file in files if file['name'].startswith(file_name+'_batch_')]
         if files:
+            await self._check_for_shimoku_generated_delete(files[0]['name'], with_shimoku_generated)
             logger.info(f'Deleting {len(files)} files to overwrite {file_name}')
             await asyncio.gather(*[self._app.delete_file(name=file['name']) for file in files])
 
@@ -180,6 +214,7 @@ class FileMetadataApi:
         :param tags: tags to be added to the file
         :param metadata: metadata to be added to the file
         """
+        await self._check_for_shimoku_generated_create(model_name)
         model_binary: bytes = pickle.dumps(model)
         return await self._app.create_file(
             name=model_name, file_object=model_binary, tags=tags, metadata=metadata, overwrite=overwrite

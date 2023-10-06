@@ -1,6 +1,6 @@
 from shimoku_api_python.async_execution_pool import async_auto_call_manager, ExecutionPoolContext
 
-from typing import List, Dict, Optional, Union, Any, TypedDict
+from typing import List, Dict, Optional, Union, Any
 
 from ..resources.app import App
 from ..resources.activity import Activity

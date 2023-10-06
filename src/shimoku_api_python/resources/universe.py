@@ -86,12 +86,12 @@ class Universe(Resource):
         :param version: Version string
         :return: Version string
         """
+        if not version:
+            return [0, 0, 0]
         return [int(v) for v in version.split('.')]
 
     @logging_before_and_after(logger.debug)
     async def get_activity_templates(self) -> List[ActivityTemplate]:
         templates = await self._base_resource.get_children(ActivityTemplate)
-        for template in templates:
-            template['version'] = template['version'] if template['version'] else '0.0.0'
         return sorted(templates, key=lambda t: [t['name']] + self.interpret_version(t['version']))
 
