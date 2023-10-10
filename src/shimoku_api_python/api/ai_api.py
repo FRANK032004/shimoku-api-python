@@ -1,8 +1,9 @@
 import asyncio
 from typing import Optional, List, Dict, Tuple, Union, Callable
 
-from functools import partial
+
 from copy import copy
+from dataclasses import dataclass
 
 from ..resources.app import App
 from ..resources.universe import Universe
@@ -17,127 +18,209 @@ from shimoku_api_python.execution_logger import logging_before_and_after, log_er
 logger = logging.getLogger(__name__)
 
 
-@async_auto_call_manager(execute=True)
-@logging_before_and_after(logging_level=logger.info)
-async def create_model(
-    self: 'AiApi', activity_template: ActivityTemplate, run_id: str,
-    model_name: str, model: bytes, metadata: Optional[dict] = None
-):
-    """ Create a model
+@logging_before_and_after(logging_level=logger.debug)
+def check_app_is_set(self: Union['AiApi', 'WorkflowMethods']):
+    """ Check that the app is set """
+    if self._app is None:
+        log_error(logger, 'Menu path not set. Please use set_menu_path() method first.', AttributeError)
+
+
+@logging_before_and_after(logging_level=logger.debug)
+def get_model_metadata(model: File) -> dict:
+    """ Get the metadata of a model
+    :param model: Model
+    :return: The metadata of the model
+    """
+    metadata: dict = copy(model['metadata'])
+    for tag in model['tags']:
+        if tag.startswith('creator_workflow_version:'):
+            metadata['creator_workflow_version'] = tag[len('creator_workflow_version:'):]
+        elif tag.startswith('creator_workflow'):
+            metadata['creator_workflow'] = tag[len('creator_workflow:'):]
+    return metadata
+
+
+@logging_before_and_after(logging_level=logger.debug)
+def get_output_file_metadata(file: File):
+    """ Get the metadata of an output file
+    :param file: File
+    :return: The metadata of the output file
+    """
+    metadata: dict = copy(file['metadata'])
+    for tag in file['tags']:
+        if tag.startswith('creator_workflow_version:'):
+            metadata['creator_workflow_version'] = tag[len('creator_workflow_version:'):]
+        elif tag.startswith('creator_workflow:'):
+            metadata['creator_workflow'] = tag[len('creator_workflow:'):]
+        elif tag.startswith('model_name:'):
+            metadata['model_name'] = tag[len('model_name:'):]
+    return metadata
+
+
+@logging_before_and_after(logging_level=logger.debug)
+def get_output_file_name(
+    activity_template: ActivityTemplate, file_name: str, run_id: str
+) -> str:
+    """ Get the name of an output file of a workflow
+    :param activity_template: Activity template of the workflow
+    :param file_name: Name of the file
+    :param run_id: Id of the run
+    :return: The name of the output file
+    """
+    name = activity_template['name']
+    version = activity_template['version']
+    return f"shimoku_generated_file_{name}_{version}_{run_id}_{file_name}"
+
+
+@logging_before_and_after(logging_level=logger.debug)
+async def check_and_get_model(app: App, model_name: str) -> File:
+    """ Check that a model exists and get it
+    :param app: App
     :param model_name: Name of the model
-    :param model: Model to be uploaded
-    :param metadata: Metadata of the model
     """
-    if not model_name or not isinstance(model_name, str):
-        log_error(logger, 'Model name has to be a non-empty string', ValueError)
-
-    file_name = f"shimoku_generated_model_{model_name}"
-
-    self._check_app_is_set()
-    await self._app.create_file(
-        name=file_name, file_object=model,
-        tags=[
-            'shimoku_generated', 'ai_model',
-            f"creator_workflow:{activity_template['name']}",
-            f"creator_workflow_version:{activity_template['version']}",
-        ],
-        metadata={
-            'model_name': model_name,
-            'run_id': run_id,
-            **(metadata or {})
-        }
-    )
-    logger.info(f'Created model {model_name}')
-
-
-@async_auto_call_manager(execute=True)
-@logging_before_and_after(logging_level=logger.info)
-async def create_output_files(
-    self: 'AiApi', activity_template: ActivityTemplate, run_id: str,
-    files: Dict[str, Union[bytes, Tuple[bytes, dict]]], model_name: Optional[str] = None,
-):
-    """ Create output files of a workflow
-    :param files: Files to be uploaded
-    :param model_name: Name of the model used
-    """
-    self._check_app_is_set()
-    if model_name is not None:
-        await self._check_and_get_model(model_name)
-    else:
-        model_name = ''
-
-    await asyncio.gather(*[
-        self._create_output_file(activity_template, file_name, file, run_id, model_name)
-        for file_name, file in files.items()
-    ])
+    app_files = await app.get_files()
+    for file in app_files:
+        if 'shimoku_generated' not in file['tags'] or 'ai_model' not in file['tags']:
+            continue
+        metadata = get_model_metadata(file)
+        if file['name'] == "shimoku_generated_model_" + model_name and metadata['model_name'] == model_name:
+            return file
+    log_error(logger, f"The model {model_name} does not exist", WorkflowError)
 
 
 class WorkflowMethods:
 
-    def __init__(self, ai_api: 'AiApi', activity_template: ActivityTemplate, run_id: str):
-        self.create_model = partial(create_model, ai_api, activity_template, run_id)
-        self.create_output_files = partial(create_output_files, ai_api, activity_template, run_id)
+    def __init__(
+        self, app: App, activity_template: ActivityTemplate,
+        run_id: str, execution_pool_context: ExecutionPoolContext
+    ):
+        self._app: App = app
+        self._private_workflow: ActivityTemplate = activity_template
+        self._run_id: str = run_id
+        self.epc = execution_pool_context
+
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _create_output_file(
+        self, activity_template: ActivityTemplate, file_name: str,
+        file: Union[bytes, Tuple[bytes, dict]], run_id: str, model_name: str
+    ) -> str:
+        """ Create an output file of a workflow
+        :param activity_template: Activity template of the workflow
+        :param file: File to be uploaded
+        :param run_id: Id of the run
+        :return: The uuid of the created file
+        """
+        metadata = {}
+        if isinstance(file, tuple):
+            file, metadata = file
+
+        complete_file_name = get_output_file_name(activity_template, file_name, run_id)
+
+        file = await self._app.create_file(
+            name=complete_file_name, file_object=file,
+            tags=['shimoku_generated', 'ai_output_file',
+                  f'creator_workflow:{activity_template["name"]}',
+                  f'creator_workflow_version:{activity_template["version"]}',
+                  f'model_name:{model_name}'],
+            metadata={
+                'file_name': file_name,
+                'run_id': run_id,
+                **metadata
+            }
+        )
+        logger.info(f'Created output file {file_name}')
+        return file['id']
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def create_model(
+        self, model_name: str, model: bytes, metadata: Optional[dict] = None
+    ):
+        """ Create a model
+        :param model_name: Name of the model
+        :param model: Model to be uploaded
+        :param metadata: Metadata of the model
+        """
+        if not model_name or not isinstance(model_name, str):
+            log_error(logger, 'Model name has to be a non-empty string', ValueError)
+
+        file_name = f"shimoku_generated_model_{model_name}"
+
+        check_app_is_set(self)
+        await self._app.create_file(
+            name=file_name, file_object=model,
+            tags=[
+                'shimoku_generated', 'ai_model',
+                f"creator_workflow:{self._private_workflow['name']}",
+                f"creator_workflow_version:{self._private_workflow['version']}",
+            ],
+            metadata={
+                'model_name': model_name,
+                'run_id': self._run_id,
+                **(metadata or {})
+            }
+        )
+        logger.info(f'Created model {model_name}')
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def get_model(
+        self, model_name: str
+    ) -> Tuple[bytes, dict]:
+        """ Get a model
+        :param model_name: Name of the model
+        :return: The model if it exists
+        """
+        check_app_is_set(self)
+        model_file: File = await check_and_get_model(self._app, model_name)
+        if model_file is None:
+            log_error(logger, f"The model {model_name} does not exist", WorkflowError)
+        return await self._app.get_file_object(model_file['id']), get_model_metadata(model_file)
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def create_output_files(
+        self, files: Dict[str, Union[bytes, Tuple[bytes, dict]]], model_name: Optional[str] = None,
+    ):
+        """ Create output files of a workflow
+        :param files: Files to be uploaded
+        :param model_name: Name of the model used
+        """
+        check_app_is_set(self)
+        if model_name is not None:
+            await check_and_get_model(self._app, model_name)
+        else:
+            model_name = ''
+
+        await asyncio.gather(*[
+            self._create_output_file(self._private_workflow, file_name, file, self._run_id, model_name)
+            for file_name, file in files.items()
+        ])
+
+
+@dataclass
+class PrivateWorkflowCredentials:
+    workflow_name: str
+    workflow_version: str
+    run_id: str
 
 
 class AiApi:
 
     @logging_before_and_after(logging_level=logger.debug)
-    def __init__(self, universe: Universe, app: App, execution_pool_context: ExecutionPoolContext):
+    def __init__(
+        self, access_token: str, universe: Universe, app: App,
+        execution_pool_context: ExecutionPoolContext,
+        private_workflow_credentials: Optional[PrivateWorkflowCredentials]
+    ):
         self._app: App = app
         self._universe: Universe = universe
+        self._access_token: str = access_token
+        self._private_workflow_credentials: Optional[PrivateWorkflowCredentials] = private_workflow_credentials
+        self._private_workflow_and_run_id: Optional[Tuple[ActivityTemplate, str]] = None
         if app is not None and universe['id'] != app.parent.parent['id']:
             log_error(logger, f"App {str(app)} does not belong to the universe {str(universe)}", WorkflowError)
         self.epc = execution_pool_context
-
-    @staticmethod
-    @logging_before_and_after(logging_level=logger.debug)
-    def _get_output_file_name(
-        activity_template: ActivityTemplate, file_name: str, run_id: str
-    ) -> str:
-        """ Get the name of an output file of a workflow
-        :param activity_template: Activity template of the workflow
-        :param file_name: Name of the file
-        :return: The name of the output file
-        """
-        name = activity_template['name']
-        version = activity_template['version']
-        return f"shimoku_generated_file_{name}_{version}_{run_id}_{file_name}"
-
-    @logging_before_and_after(logging_level=logger.debug)
-    def _check_app_is_set(self):
-        """ Check that the app is set """
-        if self._app is None:
-            log_error(logger, 'Menu path not set. Please use set_menu_path() method first.', AttributeError)
-
-    @logging_before_and_after(logging_level=logger.debug)
-    def _get_model_metadata(self, model: File) -> dict:
-        """ Get the metadata of a model
-        :param model: Model
-        :return: The metadata of the model
-        """
-        metadata: dict = copy(model['metadata'])
-        for tag in model['tags']:
-            if tag.startswith('creator_workflow_version:'):
-                metadata['creator_workflow_version'] = tag[len('creator_workflow_version:'):]
-            elif tag.startswith('creator_workflow'):
-                metadata['creator_workflow'] = tag[len('creator_workflow:'):]
-        return metadata
-
-    @logging_before_and_after(logging_level=logger.debug)
-    def _get_output_file_metadata(self, file: File):
-        """ Get the metadata of an output file
-        :param file: File
-        :return: The metadata of the output file
-        """
-        metadata: dict = copy(file['metadata'])
-        for tag in file['tags']:
-            if tag.startswith('creator_workflow_version:'):
-                metadata['creator_workflow_version'] = tag[len('creator_workflow_version:'):]
-            elif tag.startswith('creator_workflow:'):
-                metadata['creator_workflow'] = tag[len('creator_workflow:'):]
-            elif tag.startswith('model_name:'):
-                metadata['model_name'] = tag[len('model_name:'):]
-        return metadata
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _get_universe_api_key(self, universe_api_key: Optional[str]) -> str:
@@ -175,7 +258,8 @@ class AiApi:
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _get_activity_from_template(
-        self, activity_template: ActivityTemplate, universe_api_key: str = '', create_if_not_exists: bool = True
+        self, activity_template: ActivityTemplate,
+        universe_api_key: Optional[str] = None, create_if_not_exists: bool = True
     ) -> Activity:
         """ Get an activity from an activity template
         :param activity_template: Activity template
@@ -184,7 +268,7 @@ class AiApi:
         """
         universe_api_key = await self._get_universe_api_key(universe_api_key)
 
-        self._check_app_is_set()
+        check_app_is_set(self)
 
         name = activity_template['name']
         activity_name = 'shimoku_generated_activity_' + name
@@ -201,20 +285,6 @@ class AiApi:
             logger.info(f'Created activity for workflow {name}')
 
         return activity
-
-    @logging_before_and_after(logging_level=logger.debug)
-    async def _check_and_get_model(self, model_name: str) -> File:
-        """ Check that a model exists and get it
-        :param model_name: Name of the model
-        """
-        app_files = await self._app.get_files()
-        for file in app_files:
-            if 'shimoku_generated' not in file['tags'] or 'ai_model' not in file['tags']:
-                continue
-            metadata = self._get_model_metadata(file)
-            if file['name'] == "shimoku_generated_model_" + model_name and metadata['model_name'] == model_name:
-                return file
-        log_error(logger, f"The model {model_name} does not exist", WorkflowError)
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _check_run_id_exists(self, activity_template: ActivityTemplate, run_id: str):
@@ -242,58 +312,42 @@ class AiApi:
         logger.info(f'Created input file {file_name}')
         return file['id']
 
-    @logging_before_and_after(logging_level=logger.debug)
-    async def _create_output_file(
-        self, activity_template: ActivityTemplate, file_name: str,
-        file: Union[bytes, Tuple[bytes, dict]], run_id: str, model_name: str
-    ) -> str:
-        """ Create an output file of a workflow
-        :param activity_template: Activity template of the workflow
-        :param file: File to be uploaded
-        :param run_id: Id of the run
-        :return: The uuid of the created file
-        """
-        metadata = {}
-        if isinstance(file, tuple):
-            file, metadata = file
-
-        complete_file_name = self._get_output_file_name(activity_template, file_name, run_id)
-
-        file = await self._app.create_file(
-            name=complete_file_name, file_object=file,
-            tags=['shimoku_generated', 'ai_output_file',
-                  f'creator_workflow:{activity_template["name"]}',
-                  f'creator_workflow_version:{activity_template["version"]}',
-                  f'model_name:{model_name}'],
-            metadata={
-                'file_name': file_name,
-                'run_id': run_id,
-                **metadata
-            }
-        )
-        logger.info(f'Created output file {file_name}')
-        return file['id']
-
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    async def get_private_workflow_methods(
-        self, universe_api_key: str, workflow_name: str, workflow_version: str, run_id: str,
-    ) -> WorkflowMethods:
-        """ Get the methods of a workflow
-        :param universe_api_key: Universe API key
-        :param run_id: ID of the run
-        :param workflow_name: Name of the workflow
-        :param workflow_version: Version of the workflow
-        :return: List of methods
-        """
-        universe_api_keys = await self._universe.get_universe_api_keys()
-        if universe_api_key not in universe_api_keys:
-            log_error(logger, f"The universe API key {universe_api_key} does not exist", WorkflowError)
-        activity_template: ActivityTemplate = await self._get_activity_template(workflow_name, workflow_version)
-        self._check_app_is_set()
-        await self._check_run_id_exists(activity_template, run_id)
-        return WorkflowMethods(self, activity_template, run_id)
+    async def check_for_private_access(self):
+        """ Check if the credentials allow for private workflow methods """
+        if not self._private_workflow_credentials:
+            log_error(logger, f"Credentials must be set to use private workflow methods", WorkflowError)
 
+        pwc = self._private_workflow_credentials
+
+        universe_api_keys = [uak['id'] for uak in await self._universe.get_universe_api_keys()]
+        if self._access_token not in universe_api_keys:
+            log_error(
+                logger,
+                f"The access key must be a universe API key to use private workflow methods",
+                WorkflowError
+            )
+
+        activity_template: ActivityTemplate = await self._get_activity_template(pwc.workflow_name, pwc.workflow_version)
+
+        check_app_is_set(self)
+        await self._check_run_id_exists(activity_template, pwc.run_id)
+
+        self._private_workflow_and_run_id = (activity_template, pwc.run_id)
+
+    @logging_before_and_after(logging_level=logger.info)
+    def get_private_workflow_methods(self) -> WorkflowMethods:
+        """ Get the private workflow methods if the credentials allow for it """
+        if not self._private_workflow_and_run_id:
+            log_error(
+                logger,
+                f"Credentials must be set to use private workflow methods, "
+                f"please call check_for_private_access first",
+                WorkflowError
+            )
+        activity_template, run_id = self._private_workflow_and_run_id
+        return WorkflowMethods(self._app, activity_template, run_id, self.epc)
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -360,7 +414,7 @@ class AiApi:
     @logging_before_and_after(logging_level=logger.info)
     async def show_available_models(self):
         """ Show the available models """
-        self._check_app_is_set()
+        check_app_is_set(self)
         message = [
             "",
             "///////////////////////////////////////////////////",
@@ -377,7 +431,7 @@ class AiApi:
                 f" \033[1m- Model name:\033[0m {file['metadata']['model_name']}",
                 f"   \033[1mMetadata:\033[0m"
             ])
-            for key, value in self._get_model_metadata(file).items():
+            for key, value in get_model_metadata(file).items():
                 if key == 'model_name':
                     continue
                 message.append(f"     \033[1m- {key}:\033[0m {value}")
@@ -416,6 +470,8 @@ class AiApi:
 
         message.extend(['', "///////////////////////////////////////////////////", ''])
 
+        print('\n'.join(message))
+
     @logging_before_and_after(logging_level=logger.debug)
     async def _check_and_store_output_file(
         self, model_metadata: dict, file: File, files_by_run_id: Dict[str, Dict[str, dict]],
@@ -433,7 +489,7 @@ class AiApi:
             return
 
         output_file_metadata: dict = {'file_id': file['id']}
-        aux_output_file_metadata: dict = self._get_output_file_metadata(file)
+        aux_output_file_metadata: dict = get_output_file_metadata(file)
         output_file_metadata.update(aux_output_file_metadata)
 
         output_file_name: str = output_file_metadata.pop('file_name')
@@ -466,8 +522,8 @@ class AiApi:
         :return: Dictionary of output files by the execution identifier
         """
         app_files: List[File] = await self._app.get_files()
-        model_file: File = await self._check_and_get_model(model_name)
-        model_metadata = self._get_model_metadata(model_file)
+        model_file: File = await check_and_get_model(self._app, model_name)
+        model_metadata = get_model_metadata(model_file)
 
         files_by_run_id: Dict[str, Dict[str, dict]] = {}
         await asyncio.gather(*[
@@ -492,25 +548,12 @@ class AiApi:
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    async def get_model(self: 'AiApi', model_name: str) -> Tuple[bytes, dict]:
-        """ Get a model
-        :param model_name: Name of the model
-        :return: The model if it exists
-        """
-        self._check_app_is_set()
-        model_file: File = await self._check_and_get_model(model_name)
-        if model_file is None:
-            log_error(logger, f"The model {model_name} does not exist", WorkflowError)
-        return await self._app.get_file_object(model_file['id']), self._get_model_metadata(model_file)
-
-    @async_auto_call_manager(execute=True)
-    @logging_before_and_after(logging_level=logger.info)
     async def delete_model(self, model_name: str):
         """ Delete a model
         :param model_name: Name of the model
         """
-        self._check_app_is_set()
-        model_file: File = await self._check_and_get_model(model_name)
+        check_app_is_set(self)
+        model_file: File = await check_and_get_model(self._app, model_name)
         if model_file is None:
             log_error(logger, f"The model {model_name} does not exist", WorkflowError)
         await self._app.delete_file(model_file['id'])

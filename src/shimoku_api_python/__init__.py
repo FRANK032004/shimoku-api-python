@@ -13,7 +13,7 @@ from shimoku_api_python.api.report_metadata_api import ReportMetadataApi
 from shimoku_api_python.api.data_managing_api import DataSetManagingApi
 from shimoku_api_python.api.file_metadata_api import FileMetadataApi
 from shimoku_api_python.api.plot_api import PlotApi
-from shimoku_api_python.api.ai_api import AiApi
+from shimoku_api_python.api.ai_api import AiApi, PrivateWorkflowCredentials
 from shimoku_api_python.api.ping_api import PingApi
 from shimoku_api_python.api.activity_metadata_api import ActivityMetadataApi
 from shimoku_api_python.websockets_server import EventType
@@ -34,12 +34,30 @@ logger = logging.getLogger(__name__)
 
 class Client(object):
 
+    def _set_app_modules(self):
+        self.components = ReportMetadataApi(self._app_object, self.epc)
+        self.data = DataSetManagingApi(self._app_object, self.epc)
+        self.io = FileMetadataApi(self._app_object, self.epc)
+        self.activities = ActivityMetadataApi(self._app_object, self.epc)
+        self.plt = PlotApi(self._app_object, self.epc)
+        self.ai = AiApi(self._access_token, self._universe_object, self._app_object, self.epc, self._pwc)
+
+    def _set_modules(self):
+        self.ping = PingApi(self._api_client)
+        self.universes = UniverseMetadataApi(self._api_client, self.epc)
+        self.workspaces = BusinessMetadataApi(self._universe_object, self.epc)
+        self.activity_templates = ActivityTemplateMetadataApi(self._universe_object, self.epc)
+        self.boards = DashboardMetadataApi(self._business_object, self.epc)
+        self.menu_paths = AppMetadataApi(self._business_object, self.epc)
+        self._set_app_modules()
+
     @logging_before_and_after(logging_level=logger.debug)
     def __init__(
         self, universe_id: str = 'local', environment: str = 'production',
         access_token: Optional[str] = None, config: Optional[Dict] = None,
         verbosity: str = None, async_execution: bool = False,
-        local_port: int = 8000, open_browser_for_local_server: bool = False
+        local_port: int = 8000, open_browser_for_local_server: bool = False,
+        private_workflow_credentials: Optional[PrivateWorkflowCredentials] = None
     ):
         playground: bool = universe_id == 'local' and not access_token
         if playground:
@@ -47,6 +65,7 @@ class Client(object):
         if universe_id == 'local' and not playground:
             log_error(logger, 'Local universe can only be used in playground mode.', AttributeError)
 
+        self._access_token = access_token
         self.universe_id = universe_id
         self.workspace_id = None
         self.board_id = None
@@ -73,6 +92,7 @@ class Client(object):
         self._business_object: Optional[Business] = None
         self._app_object: Optional[App] = None
         self._dashboard_object: Optional[Dashboard] = None
+        self._pwc: Optional[PrivateWorkflowCredentials] = private_workflow_credentials
 
         self.epc = ExecutionPoolContext(api_client=self._api_client)
 
@@ -81,18 +101,7 @@ class Client(object):
         else:
             self.activate_sequential_execution()
 
-        self.ping = PingApi(self._api_client)
-        self.universes = UniverseMetadataApi(self._api_client, self.epc)
-        self.workspaces = BusinessMetadataApi(self._universe_object, self.epc)
-        self.activity_templates = ActivityTemplateMetadataApi(self._universe_object, self.epc)
-        self.boards = DashboardMetadataApi(self._business_object, self.epc)
-        self.menu_paths = AppMetadataApi(self._business_object, self.epc)
-        self.components = ReportMetadataApi(self._app_object, self.epc)
-        self.data = DataSetManagingApi(self._app_object, self.epc)
-        self.io = FileMetadataApi(self._app_object, self.epc)
-        self.activities = ActivityMetadataApi(self._app_object, self.epc)
-        self.plt = PlotApi(self._app_object, self.epc)
-        self.ai = AiApi(self._universe_object, self._app_object, self.epc)
+        self._set_modules()
 
         self._reuse_data_sets = False
         self._shared_dfs = {}
@@ -136,13 +145,7 @@ class Client(object):
         self._dashboard_object = None
         self.board_id = None
 
-        self.boards = DashboardMetadataApi(business=business, execution_pool_context=self.epc)
-        self.menu_paths = AppMetadataApi(business=business, execution_pool_context=self.epc)
-        self.components = ReportMetadataApi(app=None, execution_pool_context=self.epc)
-        self.activities = ActivityMetadataApi(app=None, execution_pool_context=self.epc)
-        self.plt = PlotApi(app=None, execution_pool_context=self.epc)
-        self.data = DataSetManagingApi(app=None, execution_pool_context=self.epc)
-        self.io = FileMetadataApi(app=None, execution_pool_context=self.epc)
+        self._set_modules()
 
     @logging_before_and_after(logging_level=logger.debug)
     def pop_out_of_menu_path(self):
@@ -207,12 +210,8 @@ class Client(object):
         app: App = await self._business_object.get_app(name=menu_path)
         self._app_object = app
         app.currently_in_use = True
-        self.activities = ActivityMetadataApi(self._app_object, self.epc)
-        self.components = ReportMetadataApi(self._app_object, self.epc)
-        self.plt = PlotApi(self._app_object, self.epc, self._reuse_data_sets)
-        self.data = DataSetManagingApi(self._app_object, self.epc)
-        self.io = FileMetadataApi(self._app_object, self.epc)
-        self.ai = AiApi(self._universe_object, self._app_object, self.epc)
+
+        self._set_app_modules()
 
         if not self._dashboard_object:
             self._dashboard_object = await self._business_object.get_dashboard(name='Default Name')

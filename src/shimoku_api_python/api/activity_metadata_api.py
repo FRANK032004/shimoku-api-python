@@ -1,6 +1,6 @@
 from shimoku_api_python.async_execution_pool import async_auto_call_manager, ExecutionPoolContext
 
-from typing import List, Dict, Optional, Union, Any
+from typing import List, Dict, Optional, Union, Any, Tuple
 
 from ..resources.app import App
 from ..resources.activity import Activity
@@ -27,7 +27,7 @@ class ActivityMetadataApi:
     @logging_before_and_after(logging_level=logger.info)
     async def create_activity(
         self, name: str, settings: Optional[Dict] = None,
-        template_id: Optional[str] = None, template_name: Optional[str] = None,
+        template_id: Optional[str] = None, template_name_version: Optional[Tuple[str, str]] = None,
         template_mode: str = 'LIGHT', universe_api_key: str = ''
     ) -> Dict:
         """
@@ -35,7 +35,7 @@ class ActivityMetadataApi:
         :param name: the name of the activity
         :param settings: the settings of the activity
         :param template_id: the template id of the activity
-        :param template_name: the template name of the activity
+        :param template_name_version: the template name and version of the activity
         :param template_mode: the template mode of the activity
         :param universe_api_key: the universe api key of the activity
         :return: the dictionary representation of the activity
@@ -43,7 +43,7 @@ class ActivityMetadataApi:
         return (
             await self._app.create_activity(
                 name=name, settings=settings, template_id=template_id,
-                template_name=template_name, template_mode=template_mode,
+                template_name_version=template_name_version, template_mode=template_mode,
                 universe_api_key=universe_api_key
             )
         ).cascade_to_dict()
