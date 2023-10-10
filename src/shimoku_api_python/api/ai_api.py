@@ -198,25 +198,16 @@ class WorkflowMethods:
         ])
 
 
-@dataclass
-class PrivateWorkflowCredentials:
-    workflow_name: str
-    workflow_version: str
-    run_id: str
-
-
 class AiApi:
 
     @logging_before_and_after(logging_level=logger.debug)
     def __init__(
         self, access_token: str, universe: Universe, app: App,
         execution_pool_context: ExecutionPoolContext,
-        private_workflow_credentials: Optional[PrivateWorkflowCredentials]
     ):
         self._app: App = app
         self._universe: Universe = universe
         self._access_token: str = access_token
-        self._private_workflow_credentials: Optional[PrivateWorkflowCredentials] = private_workflow_credentials
         self._private_workflow_and_run_id: Optional[Tuple[ActivityTemplate, str]] = None
         if app is not None and universe['id'] != app.parent.parent['id']:
             log_error(logger, f"App {str(app)} does not belong to the universe {str(universe)}", WorkflowError)
@@ -314,13 +305,8 @@ class AiApi:
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    async def check_for_private_access(self):
+    async def check_for_private_access(self, workflow_id: str, run_id: str):
         """ Check if the credentials allow for private workflow methods """
-        if not self._private_workflow_credentials:
-            log_error(logger, f"Credentials must be set to use private workflow methods", WorkflowError)
-
-        pwc = self._private_workflow_credentials
-
         universe_api_keys = [uak['id'] for uak in await self._universe.get_universe_api_keys()]
         if self._access_token not in universe_api_keys:
             log_error(
@@ -329,12 +315,12 @@ class AiApi:
                 WorkflowError
             )
 
-        activity_template: ActivityTemplate = await self._get_activity_template(pwc.workflow_name, pwc.workflow_version)
+        activity_template: ActivityTemplate = await self._universe.get_activity_template(workflow_id)
 
         check_app_is_set(self)
-        await self._check_run_id_exists(activity_template, pwc.run_id)
+        await self._check_run_id_exists(activity_template, run_id)
 
-        self._private_workflow_and_run_id = (activity_template, pwc.run_id)
+        self._private_workflow_and_run_id = (activity_template, run_id)
 
     @logging_before_and_after(logging_level=logger.info)
     def get_private_workflow_methods(self) -> WorkflowMethods:

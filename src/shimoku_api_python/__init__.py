@@ -13,7 +13,7 @@ from shimoku_api_python.api.report_metadata_api import ReportMetadataApi
 from shimoku_api_python.api.data_managing_api import DataSetManagingApi
 from shimoku_api_python.api.file_metadata_api import FileMetadataApi
 from shimoku_api_python.api.plot_api import PlotApi
-from shimoku_api_python.api.ai_api import AiApi, PrivateWorkflowCredentials
+from shimoku_api_python.api.ai_api import AiApi
 from shimoku_api_python.api.ping_api import PingApi
 from shimoku_api_python.api.activity_metadata_api import ActivityMetadataApi
 from shimoku_api_python.websockets_server import EventType
@@ -40,7 +40,7 @@ class Client(object):
         self.io = FileMetadataApi(self._app_object, self.epc)
         self.activities = ActivityMetadataApi(self._app_object, self.epc)
         self.plt = PlotApi(self._app_object, self.epc)
-        self.ai = AiApi(self._access_token, self._universe_object, self._app_object, self.epc, self._pwc)
+        self.ai = AiApi(self._access_token, self._universe_object, self._app_object, self.epc)
 
     def _set_modules(self):
         self.ping = PingApi(self._api_client)
@@ -57,7 +57,6 @@ class Client(object):
         access_token: Optional[str] = None, config: Optional[Dict] = None,
         verbosity: str = None, async_execution: bool = False,
         local_port: int = 8000, open_browser_for_local_server: bool = False,
-        private_workflow_credentials: Optional[PrivateWorkflowCredentials] = None
     ):
         playground: bool = universe_id == 'local' and not access_token
         if playground:
@@ -92,7 +91,6 @@ class Client(object):
         self._business_object: Optional[Business] = None
         self._app_object: Optional[App] = None
         self._dashboard_object: Optional[Dashboard] = None
-        self._pwc: Optional[PrivateWorkflowCredentials] = private_workflow_credentials
 
         self.epc = ExecutionPoolContext(api_client=self._api_client)
 
