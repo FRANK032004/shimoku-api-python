@@ -514,7 +514,7 @@ class AiApi:
                 'workflow_name': output_file_metadata['creator_workflow'],
                 'workflow_version': output_file_metadata['creator_workflow_version'],
                 'input': {'args': [], 'files': []},
-                'output_files': []
+                'output_files': {}
             })
             files_by_run_id.append(run_metadata)
         else:
@@ -525,7 +525,7 @@ class AiApi:
 
         output_file_metadata = {k: v for k, v in output_file_metadata.items()
                                 if k not in ['creator_workflow', 'creator_workflow_version']}
-        run_metadata['output_files'].append(output_file_metadata)
+        run_metadata['output_files'][output_file_name] = output_file_metadata
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _fill_run_metadata(self, run_metadata: dict):
@@ -730,5 +730,6 @@ class AiApi:
         await self._check_params(activity_template, params)
         run: Activity.Run = await activity.create_run(settings=params)
         logger.info(f'Result of execution: {await run.trigger_webhook()}')
+        return run['id']
 
 
