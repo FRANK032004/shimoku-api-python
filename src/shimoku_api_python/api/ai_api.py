@@ -494,7 +494,7 @@ class AiApi:
         if 'shimoku_generated' not in file['tags'] or 'ai_output_file' not in file['tags']:
             return
 
-        output_file_metadata: dict = {'file_id': file['id']}
+        output_file_metadata: dict = {}
         aux_output_file_metadata: dict = get_output_file_metadata(file)
         output_file_metadata.update(aux_output_file_metadata)
 
@@ -592,7 +592,7 @@ class AiApi:
         if isinstance(file, tuple):
             file, metadata = file
 
-        complete_file_name = get_input_file_name(file)
+        complete_file_name = get_input_file_name(file_name)
 
         await self._app.create_file(
             name=complete_file_name, file_object=file,
@@ -699,7 +699,7 @@ class AiApi:
                 if not isinstance(param_value, str):
                     log_error(
                         logger,
-                        'The parameter {param_name} is a file, a reference name to an input file is expected',
+                        f'The parameter {param_name} is a file, a reference name to an input file is expected',
                         WorkflowError
                     )
                 params[param_name] = await self._get_input_file(param_value)
