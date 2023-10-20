@@ -182,7 +182,7 @@ class Activity(Resource):
         return await self._base_resource.get_child(Activity.Run, uuid)
 
     @logging_before_and_after(logging_level=logger.debug)
-    async def get_runs(self, how_many_runs) -> List['Activity.Run']:
+    async def get_runs(self, how_many_runs: Optional[int] = None) -> List['Activity.Run']:
         """ Gets the last runs of the activity.
         :param how_many_runs: The number of runs to get.
         :return: The runs.
@@ -199,10 +199,10 @@ class Activity(Resource):
                 return dt.datetime.min
 
         runs = await self._base_resource.get_children(Activity.Run)
-
         await asyncio.gather(*[run.get_logs() for run in runs])
+        runs = sorted(runs, key=runs_ordering)
 
-        return sorted(runs, key=runs_ordering)[-how_many_runs:]
+        return runs[-how_many_runs:] if how_many_runs is not None else runs
 
     @logging_before_and_after(logging_level=logger.debug)
     async def create_run(self, settings: Optional[Union[Dict, str]] = None) -> 'Activity.Run':

@@ -23,6 +23,18 @@ class ActivityMetadataApi:
         self._app = app
         self.epc: ExecutionPoolContext = execution_pool_context
 
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _get_activity_with_error(self, uuid: Optional[str], name: Optional[str]):
+        """
+        Get an activity by its name or id, with error handling
+        :param name: the name of the activity
+        :param uuid: the id of the activity
+        """
+        activity: Activity = await self._app.get_activity(uuid=uuid, name=name)
+        if not activity:
+            log_error(logger, f'Activity ({name}) not found', ActivityError)
+        return activity
+
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def create_activity(
@@ -51,14 +63,22 @@ class ActivityMetadataApi:
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def delete_activity(
-        self, uuid: Optional[str] = None, name: Optional[str] = None
+        self, uuid: Optional[str] = None, name: Optional[str] = None, with_linked_to_templates: Optional[bool] = False
     ):
         """
         Delete an activity by its name and app id
         :param name: the name of the activity
         :param uuid: the id of the activity
-        :return:
+        :param with_linked_to_templates: if the activity is linked to a template, delete it anyway
         """
+        activity: Activity = await self._get_activity_with_error(uuid=uuid, name=name)
+        if not with_linked_to_templates and activity['activityTemplateWithMode']:
+            log_error(
+                logger,
+                f'Activity ({str(activity)}) is linked to a template please use the '
+                f'(with_linked_to_templates) parameter set to True to delete it',
+                ActivityError
+            )
         await self._app.delete_activity(uuid=uuid, name=name)
 
     @async_auto_call_manager(execute=True)
@@ -76,18 +96,6 @@ class ActivityMetadataApi:
         :return: the updated activity as a dictionary
         """
         await self._app.update_activity(uuid=uuid, name=name, new_name=new_name, settings=settings)
-
-    @logging_before_and_after(logging_level=logger.debug)
-    async def _get_activity_with_error(self, uuid: Optional[str], name: Optional[str]):
-        """
-        Get an activity by its name or id, with error handling
-        :param name: the name of the activity
-        :param uuid: the id of the activity
-        """
-        activity: Activity = await self._app.get_activity(uuid=uuid, name=name)
-        if not activity:
-            log_error(logger, f'Activity {name if name else uuid} not found', ActivityError)
-        return activity
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)

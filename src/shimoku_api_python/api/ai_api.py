@@ -1,10 +1,7 @@
 import asyncio
-from typing import Optional, List, Dict, Tuple, Union, Callable, Any
+from typing import Optional, List, Dict, Tuple, Union, Any
 
 from copy import copy
-from dataclasses import dataclass
-
-import pandas as pd
 
 from ..resources.app import App
 from ..resources.universe import Universe
@@ -37,6 +34,8 @@ def get_model_metadata(model: File) -> dict:
     for tag in model['tags']:
         if tag.startswith('creator_workflow_version:'):
             metadata['creator_workflow_version'] = tag[len('creator_workflow_version:'):]
+        elif tag.startswith('creator_workflow_id'):
+            metadata['creator_workflow_id'] = tag[len('creator_workflow_id:')]
         elif tag.startswith('creator_workflow'):
             metadata['creator_workflow'] = tag[len('creator_workflow:'):]
     return metadata
@@ -96,7 +95,7 @@ async def check_and_get_model(app: App, model_name: str) -> File:
         metadata = get_model_metadata(file)
         if file['name'] == "shimoku_generated_model_" + model_name and metadata['model_name'] == model_name:
             return file
-    log_error(logger, f"The model {model_name} does not exist", WorkflowError)
+    log_error(logger, f"The model ({model_name}) does not exist", ShimokuFileError)
 
 
 class WorkflowMethods:
@@ -139,7 +138,7 @@ class WorkflowMethods:
                 **metadata
             }
         )
-        logger.info(f'Created output file {file_name}')
+        logger.info(f'Created output file ({file_name})')
         return file['id']
 
     @async_auto_call_manager(execute=True)
@@ -164,6 +163,7 @@ class WorkflowMethods:
                 'shimoku_generated', 'ai_model',
                 f"creator_workflow:{self._private_workflow['name']}",
                 f"creator_workflow_version:{self._private_workflow['version']}",
+                f"creator_workflow_id:{self._private_workflow['id']}"
             ],
             metadata={
                 'model_name': model_name,
@@ -171,7 +171,7 @@ class WorkflowMethods:
                 **(metadata or {})
             }
         )
-        logger.info(f'Created model {model_name}')
+        logger.info(f'Created model ({model_name})')
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -184,8 +184,6 @@ class WorkflowMethods:
         """
         check_app_is_set(self)
         model_file: File = await check_and_get_model(self._app, model_name)
-        if model_file is None:
-            log_error(logger, f"The model {model_name} does not exist", WorkflowError)
         return await self._app.get_file_object(model_file['id']), get_model_metadata(model_file)
 
     @async_auto_call_manager(execute=True)
@@ -221,7 +219,7 @@ class AiApi:
         self._access_token: str = access_token
         self._private_workflow_and_run_id: Optional[Tuple[ActivityTemplate, str]] = None
         if app is not None and universe['id'] != app.parent.parent['id']:
-            log_error(logger, f"App {str(app)} does not belong to the universe {str(universe)}", WorkflowError)
+            log_error(logger, f"App ({str(app)}) does not belong to the universe ({str(universe)})", WorkflowError)
         self.epc = execution_pool_context
 
     @logging_before_and_after(logging_level=logger.debug)
@@ -296,7 +294,11 @@ class AiApi:
         """
         activity: Activity = await self._get_activity_from_template(activity_template, create_if_not_exists=False)
         if not await activity.get_run(run_id):
-            log_error(logger, f"Run {run_id} does not exist for activity {activity_template['name']}", ActivityError)
+            log_error(
+                logger,
+                f"Run ({run_id}) does not exist for the activity ({activity_template['name']})",
+                ActivityError
+            )
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -323,8 +325,8 @@ class AiApi:
         if not self._private_workflow_and_run_id:
             log_error(
                 logger,
-                f"Credentials must be set to use private workflow methods, "
-                f"please call check_for_private_access first",
+                "Credentials must be set to use private workflow methods, "
+                "please call check_for_private_access first",
                 WorkflowError
             )
         activity_template, run_id = self._private_workflow_and_run_id
@@ -411,7 +413,7 @@ class AiApi:
                 f"   \033[1mMetadata:\033[0m"
             ])
             for key, value in get_model_metadata(file).items():
-                if key == 'model_name':
+                if key in ['model_name', 'creator_workflow_version']:
                     continue
                 message.append(f"     \033[1m- {key}:\033[0m {value}")
 
@@ -426,10 +428,8 @@ class AiApi:
         """
         check_app_is_set(self)
         model_file: File = await check_and_get_model(self._app, model_name)
-        if model_file is None:
-            log_error(logger, f"The model {model_name} does not exist", WorkflowError)
         await self._app.delete_file(model_file['id'])
-        logger.info(f'Deleted model {model_name}')
+        logger.info(f'Deleted model ({model_name})')
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -485,11 +485,13 @@ class AiApi:
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _check_and_store_output_file(
-            self, model_metadata: dict, file: File, files_by_run_id: List[dict],
-            run_id: Optional[str] = None, file_name: Optional[str] = None, get_objects: bool = False
+            self, file: File, files_by_run_id: List[dict], run_id: Optional[str] = None,
+            model_metadata: Optional[dict] = None, workflow: Optional[ActivityTemplate] = None,
+            file_name: Optional[str] = None, get_objects: bool = False
     ):
         """ Check if a file is an output file then add it to the list of output files
         :param model_metadata: Metadata of the model used
+        :param workflow: Workflow used
         :param file: File to check
         :param files_by_run_id: Dictionary of output files by run ID
         :param run_id: ID of the run to check
@@ -504,20 +506,35 @@ class AiApi:
         output_file_metadata.update(aux_output_file_metadata)
 
         output_file_name: str = output_file_metadata.pop('file_name')
-        output_file_mode_name: str = output_file_metadata.pop('model_name')
-        if output_file_mode_name != model_metadata['model_name'] or (file_name and file_name != output_file_name):
+        output_file_model_name: str = output_file_metadata.pop('model_name')
+        workflow_name: str = output_file_metadata.pop('creator_workflow')
+        workflow_version: str = output_file_metadata.pop('creator_workflow_version')
+
+        if ((workflow and (workflow_name != workflow['name'] or workflow_version != workflow['version'])) or
+            (model_metadata and output_file_model_name != model_metadata['model_name']) or
+            (file_name and output_file_name != file_name)):
             return
 
         output_file_run_id: str = output_file_metadata.pop('run_id')
         if run_id and output_file_run_id != run_id:
             return
 
-        run_metadata = {}
+        run_metadata = {'activity_id': ''}
         if output_file_run_id not in [run['run_id'] for run in files_by_run_id]:
+            if not run_id:
+                run_metadata.update({
+                    'run_id': output_file_run_id
+                })
+            if not model_metadata:
+                run_metadata.update({
+                    'model_name': output_file_model_name
+                })
+            if not workflow:
+                run_metadata.update({
+                    'workflow_name': workflow_name,
+                    'workflow_version': workflow_version
+                })
             run_metadata.update({
-                'run_id': output_file_run_id,
-                'workflow_name': output_file_metadata['creator_workflow'],
-                'workflow_version': output_file_metadata['creator_workflow_version'],
                 'input': {'args': [], 'files': []},
                 'output_files': {}
             })
@@ -532,17 +549,29 @@ class AiApi:
                                 if k not in ['creator_workflow', 'creator_workflow_version']}
         run_metadata['output_files'][output_file_name] = output_file_metadata
 
+        await self._fill_run_metadata(run_metadata, output_file_run_id, workflow_name, workflow_version)
+
     @logging_before_and_after(logging_level=logger.debug)
-    async def _fill_run_metadata(self, run_metadata: dict):
+    async def _fill_run_metadata(self, run_metadata: dict, run_id: str, workflow_name: str, workflow_version: str):
         """ Fill the metadata of a run/
         :param run_metadata: Metadata of the run to fill
         """
-        workflow_name: str = run_metadata['workflow_name']
-        workflow_version: str = run_metadata['workflow_version']
         activity_template: ActivityTemplate = await self._get_activity_template(workflow_name, workflow_version)
         activity: Activity = await self._get_activity_from_template(activity_template, create_if_not_exists=False)
-        run: Activity.Run = await activity.get_run(run_metadata['run_id'])
-        run_metadata['input']['args'] = run['settings']
+        activity_runs: List[Activity.Run] = await activity.get_runs()
+        runs = [run for run in activity_runs if run['id'] == run_id]
+        run_metadata['activity_id'] = activity['id']
+        if len(runs) == 1:
+            run: Activity.Run = runs[0]
+            run_metadata['input']['args'] = run['settings']
+        elif len(runs) > 1:
+            log_error(logger, f"More than one run with ID {run_id} found", ValueError)
+        else:
+            logger.warning(
+                f"Run ({run_id}) not found, "
+                f"most likely the activity which generated it was deleted"
+            )
+            run_metadata['input'] = '# Run not found #'
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -563,56 +592,62 @@ class AiApi:
 
         files_by_run_id: List[dict] = []
         await asyncio.gather(*[
-            self._check_and_store_output_file(model_metadata, file, files_by_run_id, run_id, file_name, get_objects)
+            self._check_and_store_output_file(
+                file, files_by_run_id, run_id,
+                model_metadata=model_metadata, file_name=file_name, get_objects=get_objects
+            )
             for file in app_files
         ])
+        return files_by_run_id
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def get_output_files_by_workflow(
+            self, name: str, version: Optional[str] = None, run_id: Optional[str] = None,
+            file_name: Optional[str] = None, get_objects: bool = False,
+    ):
+        """ Get output files for a generic workflow
+        :param name: Name of the workflow to execute
+        :param version: Version of the workflow to execute
+        :return: The output files if they exist
+        :param run_id: ID of the executed run
+        :param file_name: Name of the file to get
+        :param get_objects: Get the file objects instead of the file metadata
+        """
+        app_files: List[File] = await self._app.get_files()
+        activity_template: ActivityTemplate = await self._get_activity_template(name, version)
+
+        files_by_run_id: List[dict] = []
         await asyncio.gather(*[
-            self._fill_run_metadata(run_metadata)
-            for run_metadata in files_by_run_id
+            self._check_and_store_output_file(
+                file, files_by_run_id, run_id,
+                workflow=activity_template, file_name=file_name, get_objects=get_objects
+            )
+            for file in app_files
         ])
         return files_by_run_id
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def get_output_file_object(
-            self, name: str, run_id: str, file_name: str, version: Optional[str] = None
+            self, run_id: str, file_name: str
     ) -> bytes:
         """ Get an output file object for a given workflow and run id
-        :param name: Name of the workflow to execute
         :param run_id: ID of the executed run
         :param file_name: Name of the file to get
-        :param version: Version of the workflow to execute
         """
-        activity_template: ActivityTemplate = await self._get_activity_template(name, version)
-        version = activity_template['version']
         app_files: List[File] = await self._app.get_files()
         for file in app_files:
             if 'shimoku_generated' not in file['tags'] or 'ai_output_file' not in file['tags']:
                 continue
             metadata: dict = get_output_file_metadata(file)
-            if (metadata['creator_workflow'] == name
-                    and metadata['creator_workflow_version'] == version
-                    and metadata['run_id'] == run_id
-                    and metadata['file_name'] == file_name):
+            if metadata['run_id'] == run_id and metadata['file_name'] == file_name:
                 return await self._app.get_file_object(file['id'])
         log_error(
             logger,
-            f'No output file ({file_name}) found for workflow ({name}) and run ({run_id})',
+            f'No output file ({file_name}) found for run ({run_id})',
             WorkflowError
         )
-
-    # TODO: Ask if it is wanted
-    # @async_auto_call_manager(execute=True)
-    # @logging_before_and_after(logging_level=logger.info)
-    # async def get_output_files_by_workflow(
-    #     self, name: str, version: Optional[str] = None
-    # ):
-    #     """ Get output files for a generic workflow
-    #     :param name: Name of the workflow to execute
-    #     :param version: Version of the workflow to execute
-    #     :return: The output files if they exist
-    #     """
-    #     pass
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _create_input_file(
@@ -631,7 +666,7 @@ class AiApi:
         if not force_overwrite and await self._app.get_file(name=complete_file_name) is not None:
             log_error(
                 logger,
-                f'Input file {file_name} already exists, if you want to overwrite it, use force_overwrite=True',
+                f'Input file ({file_name}) already exists, if you want to overwrite it, use force_overwrite=True',
                 WorkflowError
             )
         await self._app.create_file(
@@ -654,10 +689,10 @@ class AiApi:
         input_file: Optional[File] = await self._app.get_file(name=file_name)
 
         if input_file is None:
-            log_error(logger, f"Input file {file_name} not found", WorkflowError)
+            log_error(logger, f"Input file ({file_name}) not found", WorkflowError)
 
         if input_file['tags'] != ['shimoku_generated', 'ai_input_file'] or 'file_name' not in input_file['metadata']:
-            log_error(logger, f"File {file_name} is not an input file", WorkflowError)
+            log_error(logger, f"File ({file_name}) is not an input file", WorkflowError)
 
         return input_file['id']
 
@@ -694,6 +729,19 @@ class AiApi:
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
+    async def get_available_input_files(self) -> List[dict]:
+        """ Get available input files for a workflow """
+        check_app_is_set(self)
+        app_files: List[File] = await self._app.get_files()
+        available_input_files = []
+        for file in app_files:
+            if 'shimoku_generated' not in file['tags'] or 'ai_input_file' not in file['tags']:
+                continue
+            available_input_files.append(file['metadata'])
+        return available_input_files
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
     async def delete_input_file(self, file_name: str):
         """ Delete an input file """
         check_app_is_set(self)
@@ -703,7 +751,7 @@ class AiApi:
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    async def show_input_files(self):
+    async def show_available_input_files(self):
         """ Show the available input files """
         check_app_is_set(self)
         message = [
@@ -715,13 +763,17 @@ class AiApi:
         for file in app_files:
             if 'shimoku_generated' not in file['tags'] or 'ai_input_file' not in file['tags']:
                 continue
+            metadata = {k: v for k, v in file['metadata'].items() if k not in ['file_name']}
             message.extend([
                 '',
                 f" \033[1m- File name:\033[0m {file['metadata']['file_name']}",
-                f"   \033[1mMetadata:\033[0m"
+
             ])
-            for key, value in file['metadata'].items():
-                message.append(f"     \033[1m- {key}:\033[0m {value}")
+            if metadata:
+                message.extend([
+                    f"   \033[1mMetadata:\033[0m",
+                    *[f"     \033[1m- {k}:\033[0m {v}" for k, v in metadata.items()]
+                ])
 
         message.extend(["", "///////////////////////////////////////////////////", ""])
         print('\n'.join(message))
@@ -736,7 +788,7 @@ class AiApi:
         if any(param not in input_settings for param in params):
             log_error(
                 logger,
-                f"Unknown parameters for workflow {activity_template['name']}: "
+                f"Unknown parameters for workflow ({activity_template['name']}): "
                 f"{[param for param in params if param not in input_settings]} \n"
                 f"The possible parameters are: {list(input_settings.keys())}",
                 WorkflowError
@@ -746,7 +798,7 @@ class AiApi:
                 if definition['mandatory']:
                     log_error(
                         logger,
-                        f"Missing parameter {param_name} for activity template {activity_template['name']}, "
+                        f"Missing parameter ({param_name}) for workflow ({activity_template['name']}), "
                         f"the description of the missing parameter is: {definition['description']}",
                         WorkflowError
                     )
@@ -758,7 +810,7 @@ class AiApi:
                 if not isinstance(param_value, str):
                     log_error(
                         logger,
-                        f'The parameter {param_name} is a file, a reference name to an input file is expected',
+                        f'The parameter ({param_name}) is expected to be a reference name to an input file',
                         WorkflowError
                     )
                 await self._get_input_file(param_value)
@@ -766,7 +818,7 @@ class AiApi:
             elif str(type(param_value)) != f"<class '{param_definition_type}'>":
                 log_error(
                     logger,
-                    f"Wrong type for parameter {param_name} for activity template {activity_template['name']}"
+                    f"Wrong type for parameter ({param_name}) for the workflow ({activity_template['name']})"
                     f"the description of the missing parameter is: {definition['description']}\n"
                     f"Expected type: {param_definition_type}\n"
                     f"Provided type: {str(type(param_value))[8:-2]}",
@@ -789,5 +841,5 @@ class AiApi:
         activity: Activity = await self._get_activity_from_template(activity_template, universe_api_key)
         await self._check_params(activity_template, params)
         run: Activity.Run = await activity.create_run(settings=params)
-        logger.info(f'Result of execution: {await run.trigger_webhook()}')
+        logger.info(f'Response from execution trigger: {await run.trigger_webhook()}')
         return run['id']
