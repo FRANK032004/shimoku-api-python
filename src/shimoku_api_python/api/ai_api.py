@@ -519,7 +519,7 @@ class AiApi:
         if run_id and output_file_run_id != run_id:
             return
 
-        run_metadata = {'activity_id': ''}
+        run_metadata = {}
         if output_file_run_id not in [run['run_id'] for run in files_by_run_id]:
             if not run_id:
                 run_metadata.update({
@@ -552,26 +552,59 @@ class AiApi:
         await self._fill_run_metadata(run_metadata, output_file_run_id, workflow_name, workflow_version)
 
     @logging_before_and_after(logging_level=logger.debug)
+    async def _fill_input_for_run_metadata(
+        self, key: str, value: Any, args: dict, files: dict, input_settings: dict, app_files: List[File]
+    ):
+        """ Fill the files and args of a run metadata
+        :param key: Key of the input
+        :param value: Value of the input
+        :param args: Args of the run metadata
+        :param files: Files of the run metadata
+        :param input_settings: Settings of the input
+        :param app_files: Files of the app
+        """
+        if key not in input_settings:
+            return
+        if input_settings[key]['datatype'] == 'file':
+            filtered_files: List[File] = [file for file in app_files if file['id'] == value]
+            if len(filtered_files) > 1:
+                log_error(logger, f"More than one file with ID {value} found", ValueError)
+            elif len(filtered_files) == 0:
+                value = '# file not found #'
+            else:
+                file = filtered_files[0]
+                value = file['metadata']
+            files[key] = value
+        else:
+            args[key] = value
+
+    @logging_before_and_after(logging_level=logger.debug)
     async def _fill_run_metadata(self, run_metadata: dict, run_id: str, workflow_name: str, workflow_version: str):
-        """ Fill the metadata of a run/
+        """ Fill the metadata of a run
         :param run_metadata: Metadata of the run to fill
+        :param run_id: ID of the run to fill
+        :param workflow_name: Name of the workflow used
+        :param workflow_version: Version of the workflow used
         """
         activity_template: ActivityTemplate = await self._get_activity_template(workflow_name, workflow_version)
         activity: Activity = await self._get_activity_from_template(activity_template, create_if_not_exists=False)
         activity_runs: List[Activity.Run] = await activity.get_runs()
         runs = [run for run in activity_runs if run['id'] == run_id]
-        run_metadata['activity_id'] = activity['id']
-        if len(runs) == 1:
-            run: Activity.Run = runs[0]
-            run_metadata['input']['args'] = run['settings']
-        elif len(runs) > 1:
+        if len(runs) > 1:
             log_error(logger, f"More than one run with ID {run_id} found", ValueError)
-        else:
-            logger.warning(
-                f"Run ({run_id}) not found, "
-                f"most likely the activity which generated it was deleted"
-            )
+        if len(runs) == 0:
             run_metadata['input'] = '# Run not found #'
+            return
+        run: Activity.Run = runs[0]
+        input_settings = activity_template['inputSettings']
+        args = {}
+        files = {}
+        await asyncio.gather(
+            *[self._fill_input_for_run_metadata(k, v, args, files, input_settings, await self._app.get_files())
+              for k, v in run['settings'].items()]
+        )
+        run_metadata['input']['args'] = args
+        run_metadata['input']['files'] = files
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -709,24 +742,6 @@ class AiApi:
             for file_name, file in input_files.items()
         ])
 
-    @logging_before_and_after(logging_level=logger.debug)
-    async def _get_input_file_object(self, file_name: str) -> bytes:
-        """ Get the data of an input file
-        :param file_name: Name of the file to get
-        :return: Data of the file
-        """
-        return await self._app.get_file_object(await self._get_input_file(file_name))
-
-    @async_auto_call_manager(execute=True)
-    @logging_before_and_after(logging_level=logger.info)
-    async def get_input_file_objects(self, input_files: List[str]) -> Tuple[bytes]:
-        """ Get input file objects for a workflow
-        :param input_files: List of input files to get
-        :return: The input files if they exist
-        """
-        check_app_is_set(self)
-        return await asyncio.gather(*[self._get_input_file_object(file_name) for file_name in input_files])
-
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def get_available_input_files(self) -> List[dict]:
@@ -738,7 +753,7 @@ class AiApi:
             if 'shimoku_generated' not in file['tags'] or 'ai_input_file' not in file['tags']:
                 continue
             available_input_files.append(file['metadata'])
-        return available_input_files
+        return sorted(available_input_files, key=lambda x: x['file_name'])
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -759,7 +774,7 @@ class AiApi:
             "///////////////////////////////////////////////////",
             "///////////////// Available Files /////////////////",
         ]
-        app_files: List[File] = await self._app.get_files()
+        app_files: List[File] = sorted(await self._app.get_files(), key=lambda x: x['file_name'])
         for file in app_files:
             if 'shimoku_generated' not in file['tags'] or 'ai_input_file' not in file['tags']:
                 continue
@@ -813,8 +828,7 @@ class AiApi:
                         f'The parameter ({param_name}) is expected to be a reference name to an input file',
                         WorkflowError
                     )
-                await self._get_input_file(param_value)
-                params[param_name] = param_value
+                params[param_name] = await self._get_input_file(param_value)
             elif str(type(param_value)) != f"<class '{param_definition_type}'>":
                 log_error(
                     logger,
