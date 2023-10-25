@@ -119,6 +119,32 @@ class Activity(Resource):
 
             return response['STATUS']
 
+    @staticmethod
+    def _runs_ordering(run: 'Activity.Run') -> dt.datetime:
+        """ Returns the datetime of the last log of the run. Used for sorting runs.
+        :param run: The run.
+        :return: The datetime of the last log of the run.
+        """
+        logs = run._base_resource.children[Activity.Run.Log]
+        if len(logs) > 0:
+            return max([
+                dt.datetime.strptime(log['dateTime'], "%Y-%m-%dT%H:%M:%S.%fZ")
+                if log['dateTime'] else dt.datetime.min
+                for log_id, log in logs
+            ])
+        else:
+            return dt.datetime.min
+
+    @staticmethod
+    @logging_before_and_after(logging_level=logger.debug)
+    async def sort_runs_by_log_time(runs: List['Activity.Run']) -> List['Activity.Run']:
+        """ Returns the runs ordered by the datetime of the last log of the run.
+        :param runs: The runs.
+        :return: The runs ordered by the datetime of the last log of the run.
+        """
+        await asyncio.gather(*[run.get_logs() for run in runs])
+        return sorted(runs, key=Activity._runs_ordering)
+
     @logging_before_and_after(logging_level=logger.debug)
     def __init__(self, parent: 'App', uuid: Optional[str] = None, alias: Optional[str] = None,
                  db_resource: Optional[Dict] = None):
@@ -187,21 +213,7 @@ class Activity(Resource):
         :param how_many_runs: The number of runs to get.
         :return: The runs.
         """
-        def runs_ordering(run: 'Activity.Run') -> dt.datetime:
-            logs = run._base_resource.children[Activity.Run.Log]
-            if len(logs) > 0:
-                return max([
-                    dt.datetime.strptime(log['dateTime'], "%Y-%m-%dT%H:%M:%S.%fZ")
-                    if log['dateTime'] else dt.datetime.min
-                    for log_id, log in logs
-                ])
-            else:
-                return dt.datetime.min
-
-        runs = await self._base_resource.get_children(Activity.Run)
-        await asyncio.gather(*[run.get_logs() for run in runs])
-        runs = sorted(runs, key=runs_ordering)
-
+        runs = await Activity.sort_runs_by_log_time(await self._base_resource.get_children(Activity.Run))
         return runs[-how_many_runs:] if how_many_runs is not None else runs
 
     @logging_before_and_after(logging_level=logger.debug)

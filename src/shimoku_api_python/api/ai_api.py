@@ -112,7 +112,7 @@ class WorkflowMethods:
     @logging_before_and_after(logging_level=logger.debug)
     async def _create_output_file(
             self, activity_template: ActivityTemplate, file_name: str,
-            file: Union[bytes, Tuple[bytes, dict]], run_id: str, model_name: str
+            file: Union[bytes, Tuple[bytes, dict]], run_id: str, model_name: Optional[str] = None
     ) -> str:
         """ Create an output file of a workflow
         :param activity_template: Activity template of the workflow
@@ -126,12 +126,14 @@ class WorkflowMethods:
 
         complete_file_name = get_output_file_name(activity_template, file_name, run_id)
 
+        tags = ['shimoku_generated', 'ai_output_file',
+                f'creator_workflow:{activity_template["name"]}',
+                f'creator_workflow_version:{activity_template["version"]}']
+        if model_name is not None:
+            tags.append(f'model_name:{model_name}')
+
         file = await self._app.create_file(
-            name=complete_file_name, file_object=file,
-            tags=['shimoku_generated', 'ai_output_file',
-                  f'creator_workflow:{activity_template["name"]}',
-                  f'creator_workflow_version:{activity_template["version"]}',
-                  f'model_name:{model_name}'],
+            name=complete_file_name, file_object=file, tags=tags,
             metadata={
                 'file_name': file_name,
                 'run_id': run_id,
@@ -431,27 +433,20 @@ class AiApi:
         await self._app.delete_file(model_file['id'])
         logger.info(f'Deleted model ({model_name})')
 
-    @async_auto_call_manager(execute=True)
-    @logging_before_and_after(logging_level=logger.info)
-    async def show_last_execution_logs(
-            self, name: str, version: Optional[str] = None, how_many: int = 1
-    ):
-        """ Show the logs of the executions of a workflow
-        :param name: Name of the workflow to execute
-        :param version: Version of the workflow to execute
-        :param how_many: Number of executions to get
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _get_runs_message(self, runs: List[Activity.Run], wf_input_settings: Union[dict, list]) -> List[str]:
+        """ Get the output from a list of runs
+        :param runs: List of runs
+        :param wf_input_settings: Input settings of the workflow/s
+        :return: Message of the run
         """
-        activity_template: ActivityTemplate = await self._get_activity_template(name, version)
-        input_settings = activity_template['inputSettings']
-        activity: Activity = await self._get_activity_from_template(activity_template, create_if_not_exists=False)
-        runs: List[Activity.Run] = await activity.get_runs(how_many)
-        message = [
-            '',
-            '///////////////////////////////////////////////////',
-            f' LOGS OF {name.upper()} '.center(51, '/')
-        ]
-
-        for run in runs:
+        message = []
+        # No need to use 'gather' here because logs are already cached from ordering the runs
+        for i, run in enumerate(runs[::-1]):
+            if isinstance(wf_input_settings, list):
+                input_settings = wf_input_settings[i]
+            else:
+                input_settings = wf_input_settings
             run_settings = {k: v for k, v in run['settings'].items()
                             if k in input_settings and input_settings[k]['datatype'] != 'file'}
             message.extend([
@@ -464,7 +459,90 @@ class AiApi:
             ])
 
         message.extend(['', "///////////////////////////////////////////////////", ''])
+        return message
 
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def show_last_execution_logs_by_model(
+        self, model_name: str, how_many: int = 1
+    ):
+        check_app_is_set(self)
+        app_files: List[File] = await self._app.get_files()
+        model_file: File = await check_and_get_model(self._app, model_name)
+        model_metadata: dict = get_model_metadata(model_file)
+        runs: List[Activity.Run] = []
+        input_settings_by_run_id: Dict[str, dict] = {}
+        for file in app_files:
+            if 'shimoku_generated' not in file['tags'] or 'ai_output_file' not in file['tags']:
+                continue
+            output_file_metadata: dict = get_output_file_metadata(file)
+            output_file_model_name = output_file_metadata.pop('model_name') if model_metadata else None
+            if output_file_model_name == model_name:
+                activity_template: ActivityTemplate = await self._get_activity_template(
+                    output_file_metadata['creator_workflow'],
+                    output_file_metadata['creator_workflow_version']
+                )
+                activity: Activity = await self._get_activity_from_template(
+                    activity_template, create_if_not_exists=False
+                )
+                run_id = output_file_metadata['run_id']
+                input_settings = activity_template['inputSettings']
+                runs.append(await activity.get_run(run_id))
+                input_settings_by_run_id[run_id] = input_settings
+        runs = (await Activity.sort_runs_by_log_time(runs))[-how_many:]
+        message = [
+            '',
+            '///////////////////////////////////////////////////',
+            f' LOGS OF EXECUTIONS BY {model_name.upper()} '.center(51, '/')
+        ]
+        input_settings_list = [input_settings_by_run_id[run['id']] for run in runs]
+        message.extend(await self._get_runs_message(runs, input_settings_list))
+        print('\n'.join(message))
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def show_last_execution_logs_by_workflow(
+            self, workflow_name: str, version: Optional[str] = None, how_many: int = 1
+    ):
+        """ Show the logs of the executions of a workflow
+        :param workflow_name: Name of the workflow to execute
+        :param version: Version of the workflow to execute
+        :param how_many: Number of executions to get
+        """
+        check_app_is_set(self)
+        activity_template: ActivityTemplate = await self._get_activity_template(workflow_name, version)
+        input_settings = activity_template['inputSettings']
+        activity: Activity = await self._get_activity_from_template(activity_template, create_if_not_exists=False)
+        runs: List[Activity.Run] = await activity.get_runs(how_many)
+        message = [
+            '',
+            '///////////////////////////////////////////////////',
+            f' LOGS OF {workflow_name.upper()} '.center(51, '/')
+        ]
+        message.extend(await self._get_runs_message(runs, input_settings))
+        print('\n'.join(message))
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def show_execution_logs(
+            self, run_ids: list[str], workflow_name: str, version: Optional[str] = None
+    ):
+        """ Show the logs of the executions of a workflow
+        :param run_ids: Ids of the runs to get
+        :param workflow_name: Name of the workflow to execute
+        :param version: Version of the workflow to execute
+        """
+        check_app_is_set(self)
+        activity_template: ActivityTemplate = await self._get_activity_template(workflow_name, version)
+        input_settings = activity_template['inputSettings']
+        activity: Activity = await self._get_activity_from_template(activity_template, create_if_not_exists=False)
+        runs: List[Activity.Run] = await asyncio.gather(*[activity.get_run(run_id) for run_id in run_ids])
+        message = [
+            '',
+            '///////////////////////////////////////////////////',
+            f' LOGS OF {workflow_name.upper()} '.center(51, '/')
+        ]
+        message.extend(await self._get_runs_message(runs, input_settings))
         print('\n'.join(message))
 
     @async_auto_call_manager(execute=True)
@@ -506,7 +584,7 @@ class AiApi:
         output_file_metadata.update(aux_output_file_metadata)
 
         output_file_name: str = output_file_metadata.pop('file_name')
-        output_file_model_name: str = output_file_metadata.pop('model_name')
+        output_file_model_name: Optional[str] = output_file_metadata.get('model_name')
         workflow_name: str = output_file_metadata.pop('creator_workflow')
         workflow_version: str = output_file_metadata.pop('creator_workflow_version')
 
@@ -525,7 +603,7 @@ class AiApi:
                 run_metadata.update({
                     'run_id': output_file_run_id
                 })
-            if not model_metadata:
+            if not model_metadata and output_file_model_name is not None:
                 run_metadata.update({
                     'model_name': output_file_model_name
                 })
@@ -758,7 +836,9 @@ class AiApi:
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def delete_input_file(self, file_name: str):
-        """ Delete an input file """
+        """ Delete an input file
+        :param file_name: Name of the file to delete
+        """
         check_app_is_set(self)
         file_id = await self._get_input_file(file_name)
         await self._app.delete_file(file_id)
