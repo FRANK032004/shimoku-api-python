@@ -406,9 +406,9 @@ class AiApi:
             "//////////////// Available models /////////////////",
         ]
         app_files: List[File] = await self._app.get_files()
-        for file in app_files:
-            if 'shimoku_generated' not in file['tags'] or 'ai_model' not in file['tags']:
-                continue
+        model_files = [file for file in app_files if 'shimoku_generated' in file['tags'] and 'ai_model' in file['tags']]
+        model_files = sorted(model_files, key=lambda file: file['metadata']['model_name'])
+        for file in model_files:
             message.extend([
                 '',
                 f" \033[1m- Model name:\033[0m {file['metadata']['model_name']}",
@@ -820,18 +820,21 @@ class AiApi:
             for file_name, file in input_files.items()
         ])
 
+    @logging_before_and_after(logging_level=logger.debug)
+    async def _get_available_input_files(self) -> List[File]:
+        """ Get available input files for a workflow """
+        app_files: List[File] = await self._app.get_files()
+        input_files = [
+            file for file in app_files if 'shimoku_generated' in file['tags'] and 'ai_input_file' in file['tags']
+        ]
+        return sorted(input_files, key=lambda x: x['metadata']['file_name'])
+
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def get_available_input_files(self) -> List[dict]:
         """ Get available input files for a workflow """
         check_app_is_set(self)
-        app_files: List[File] = await self._app.get_files()
-        available_input_files = []
-        for file in app_files:
-            if 'shimoku_generated' not in file['tags'] or 'ai_input_file' not in file['tags']:
-                continue
-            available_input_files.append(file['metadata'])
-        return sorted(available_input_files, key=lambda x: x['file_name'])
+        return [file['metadata'] for file in await self._get_available_input_files()]
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
@@ -854,10 +857,8 @@ class AiApi:
             "///////////////////////////////////////////////////",
             "///////////////// Available Files /////////////////",
         ]
-        app_files: List[File] = sorted(await self._app.get_files(), key=lambda x: x['file_name'])
-        for file in app_files:
-            if 'shimoku_generated' not in file['tags'] or 'ai_input_file' not in file['tags']:
-                continue
+        input_files = await self._get_available_input_files()
+        for file in input_files:
             metadata = {k: v for k, v in file['metadata'].items() if k not in ['file_name']}
             message.extend([
                 '',
