@@ -597,12 +597,8 @@ class AiApi:
         if run_id and output_file_run_id != run_id:
             return
 
-        run_metadata = {}
+        run_metadata = {'run_id': output_file_run_id}
         if output_file_run_id not in [run['run_id'] for run in files_by_run_id]:
-            if not run_id:
-                run_metadata.update({
-                    'run_id': output_file_run_id
-                })
             if not model_metadata and output_file_model_name is not None:
                 run_metadata.update({
                     'model_name': output_file_model_name
