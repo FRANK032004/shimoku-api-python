@@ -334,6 +334,35 @@ class AiApi:
         activity_template, run_id = self._private_workflow_and_run_id
         return WorkflowMethods(self._app, activity_template, run_id, self.epc)
 
+    @logging_before_and_after(logging_level=logger.debug)
+    def _add_input_params_to_message(self, params: Dict[str, dict]):
+        """ Add the parameters to a message
+        :param params: Parameters to add
+        :param message: Message to add the parameters to
+        """
+        message = []
+        for param_name, param in params.items():
+            message.append(f"\033[1m- {param_name}"
+                           f"{' (Optional)' if not param['mandatory'] else ''}:\033[0m {param['datatype']}")
+            if param['description']:
+                message.append(f"  {param['description']}")
+        return message
+
+    @logging_before_and_after(logging_level=logger.debug)
+    def _add_args_and_files_to_message(self, input_settings: Dict[str, dict]) -> List[str]:
+        """ Add the args and files to a message
+        :param input_settings: Input settings of the workflow
+        :param message: Message to add the args and files to
+        """
+        message = []
+        input_files = {key: param for key, param in input_settings.items() if param['datatype'] == 'file'}
+        input_args = {key: param for key, param in input_settings.items() if param['datatype'] != 'file'}
+        message.append(f"--- args ---")
+        message.extend(["  " + line for line in self._add_input_params_to_message(input_args)])
+        message.append(f"--- files ---")
+        message.extend(["  " + line for line in self._add_input_params_to_message(input_files)])
+        return message
+
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def show_available_workflows(self, show_input_parameters: bool = False):
@@ -362,11 +391,9 @@ class AiApi:
             )
             if show_input_parameters:
                 message.append(f"   \033[1mInput parameters:\033[0m")
-                for param_name, param in template['inputSettings'].items():
-                    message.append(f"     \033[1m- {param_name}"
-                                   f"{' (Optional)' if not param['mandatory'] else ''}:\033[0m {param['datatype']}")
-                    if param['description']:
-                        message.append(f"       {param['description']}")
+                message.extend(["     " + line
+                                for line in self._add_args_and_files_to_message(template['inputSettings'])])
+
         message.extend(["", "///////////////////////////////////////////////////", ""])
         print('\n'.join(message))
 
@@ -382,15 +409,11 @@ class AiApi:
             "///////////////////////////////////////////////////",
             f" {name} parameters ".center(51, '/'),
             "",
-            f"\033[1mDescription:\033[0m {template['description']} "
+            f"  \033[1mDescription:\033[0m {template['description']} "
             f"(wait time between runs: >{template['minRunInterval']}s)",
-            f"\033[1mInput parameters:\033[0m"
+            f"  \033[1mInput parameters:\033[0m"
         ]
-        for param_name, param in template['inputSettings'].items():
-            message.append(f"  \033[1m- {param_name}"
-                           f"{' (Optional)' if not param['mandatory'] else ''}:\033[0m {param['datatype']}")
-            if param['description']:
-                message.append(f"    {param['description']}")
+        message.extend(["    " + line for line in self._add_args_and_files_to_message(template['inputSettings'])])
 
         message.extend(["", "///////////////////////////////////////////////////", ""])
         print('\n'.join(message))
@@ -683,8 +706,7 @@ class AiApi:
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def get_output_files_by_model(
-            self, model_name: str, run_id: Optional[str] = None,
-            file_name: Optional[str] = None, get_objects: bool = False,
+            self, model_name: str, file_name: Optional[str] = None, get_objects: bool = False
     ):
         """ Get output files for the executions of workflows with a given model
         :param model_name: Name of the model to use
@@ -700,8 +722,7 @@ class AiApi:
         files_by_run_id: List[dict] = []
         await asyncio.gather(*[
             self._check_and_store_output_file(
-                file, files_by_run_id, run_id,
-                model_metadata=model_metadata, file_name=file_name, get_objects=get_objects
+                file, files_by_run_id, model_metadata=model_metadata, file_name=file_name, get_objects=get_objects
             )
             for file in app_files
         ])
@@ -710,8 +731,7 @@ class AiApi:
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def get_output_files_by_workflow(
-            self, name: str, version: Optional[str] = None, run_id: Optional[str] = None,
-            file_name: Optional[str] = None, get_objects: bool = False,
+            self, name: str, version: Optional[str] = None, file_name: Optional[str] = None, get_objects: bool = False
     ):
         """ Get output files for a generic workflow
         :param name: Name of the workflow to execute
@@ -727,8 +747,7 @@ class AiApi:
         files_by_run_id: List[dict] = []
         await asyncio.gather(*[
             self._check_and_store_output_file(
-                file, files_by_run_id, run_id,
-                workflow=activity_template, file_name=file_name, get_objects=get_objects
+                file, files_by_run_id, workflow=activity_template, file_name=file_name, get_objects=get_objects
             )
             for file in app_files
         ])
@@ -736,25 +755,31 @@ class AiApi:
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
-    async def get_output_file_object(
-            self, run_id: str, file_name: str
-    ) -> bytes:
+    async def get_output_file_objects(
+            self, run_id: str, file_name: Optional[str] = None
+    ) -> Union[bytes, Dict[str, bytes]]:
         """ Get an output file object for a given workflow and run id
         :param run_id: ID of the executed run
         :param file_name: Name of the file to get
         """
         app_files: List[File] = await self._app.get_files()
-        for file in app_files:
-            if 'shimoku_generated' not in file['tags'] or 'ai_output_file' not in file['tags']:
-                continue
-            metadata: dict = get_output_file_metadata(file)
-            if metadata['run_id'] == run_id and metadata['file_name'] == file_name:
-                return await self._app.get_file_object(file['id'])
-        log_error(
-            logger,
-            f'No output file ({file_name}) found for run ({run_id})',
-            WorkflowError
-        )
+        files_by_run_id: List[dict] = []
+        await asyncio.gather(*[
+            self._check_and_store_output_file(file, files_by_run_id, run_id, file_name=file_name, get_objects=True)
+            for file in app_files
+        ])
+        if len(files_by_run_id) == 0:
+            log_error(logger, f"No output files found for run ({run_id})", WorkflowError)
+
+        output_files_by_name = files_by_run_id[0]['output_files']
+
+        if file_name is None:
+            return {file_name: file_dict['object'] for file_name, file_dict in output_files_by_name.items()}
+
+        if file_name not in output_files_by_name:
+            log_error(logger, f'No output file ({file_name}) found for run ({run_id})', WorkflowError)
+
+        return output_files_by_name[file_name]['object']
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _create_input_file(

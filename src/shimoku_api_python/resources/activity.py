@@ -1,9 +1,10 @@
+import datetime
 import datetime as dt
 
 import asyncio
 import json
 
-from typing import List, Dict, Optional, Union, TYPE_CHECKING, TypedDict
+from typing import List, Dict, Optional, Union, TYPE_CHECKING, TypedDict, Any
 
 from ..base_resource import Resource
 
@@ -118,6 +119,16 @@ class Activity(Resource):
             )
 
             return response['STATUS']
+
+        @logging_before_and_after(logging_level=logger.debug)
+        def cascade_to_dict(self) -> Dict[str, Any]:
+            """
+            Returns the run as a dictionary.
+            :return: The run as a dictionary.
+            """
+            run_dict = super().cascade_to_dict()
+            run_dict['logs'] = sorted(run_dict['logs'], key=lambda log: log['dateTime'])
+            return run_dict
 
     @staticmethod
     def _runs_ordering(run: 'Activity.Run') -> dt.datetime:
