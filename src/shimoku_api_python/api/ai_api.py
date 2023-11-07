@@ -35,7 +35,7 @@ def get_model_metadata(model: File) -> dict:
         if tag.startswith('creator_workflow_version:'):
             metadata['creator_workflow_version'] = tag[len('creator_workflow_version:'):]
         elif tag.startswith('creator_workflow_id'):
-            metadata['creator_workflow_id'] = tag[len('creator_workflow_id:')]
+            metadata['creator_workflow_id'] = tag[len('creator_workflow_id:'):]
         elif tag.startswith('creator_workflow'):
             metadata['creator_workflow'] = tag[len('creator_workflow:'):]
     return metadata
