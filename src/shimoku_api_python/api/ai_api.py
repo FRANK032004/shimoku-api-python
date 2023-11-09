@@ -257,7 +257,8 @@ class AiApi:
             activity_template = activity_templates[-1] if len(activity_templates) > 0 else None
         if activity_template is None:
             log_error(
-                logger, f"The AI function ({name} {'v' + version if version is not None else ''}) does not exist",
+                logger,
+                f"The AI function ({name} {'v' + (version if version is not None else '')}) does not exist",
                 AIFunctionError
             )
         return activity_template
@@ -765,7 +766,7 @@ class AiApi:
     @logging_before_and_after(logging_level=logger.info)
     async def get_output_file_objects(
             self, run_id: str, file_name: Optional[str] = None
-    ) -> Union[bytes, Dict[str, bytes]]:
+    ) -> Union[tuple[bytes, dict], Dict[str, tuple[bytes, dict]]]:
         """ Get an output file object for a given ai_function and run id
         :param run_id: ID of the executed run
         :param file_name: Name of the file to get
@@ -782,12 +783,16 @@ class AiApi:
         output_files_by_name = files_by_run_id[0]['output_files']
 
         if file_name is None:
-            return {file_name: file_dict['object'] for file_name, file_dict in output_files_by_name.items()}
+            return_dict = {}
+            for file_name, file_dict in output_files_by_name.items():
+                return_dict[file_name] = file_dict['object'], {k: v for k, v in file_dict.items() if k != 'object'}
+            return return_dict
 
         if file_name not in output_files_by_name:
             log_error(logger, f'No output file ({file_name}) found for run ({run_id})', AIFunctionError)
 
-        return output_files_by_name[file_name]['object']
+        file_dict = output_files_by_name[file_name]
+        return file_dict['object'], {k: v for k, v in file_dict.items() if k != 'object'}
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _create_input_file(
@@ -946,7 +951,7 @@ class AiApi:
                         f'The parameter ({param_name}) is expected to be a model name',
                         AIFunctionError
                     )
-                if not check_and_get_model(self._app, param_value):
+                if not await check_and_get_model(self._app, param_value):
                     log_error(
                         logger,
                         f'The model ({param_value}) does not exist',
