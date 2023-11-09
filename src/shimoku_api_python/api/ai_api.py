@@ -939,6 +939,19 @@ class AiApi:
                         AIFunctionError
                     )
                 params[param_name] = await self._get_input_file(param_value)
+            elif definition['datatype'] == 'model':
+                if not isinstance(param_value, str):
+                    log_error(
+                        logger,
+                        f'The parameter ({param_name}) is expected to be a model name',
+                        AIFunctionError
+                    )
+                if not check_and_get_model(self._app, param_value):
+                    log_error(
+                        logger,
+                        f'The model ({param_value}) does not exist',
+                        AIFunctionError
+                    )
             elif str(type(param_value)) != f"<class '{param_definition_type}'>":
                 log_error(
                     logger,
