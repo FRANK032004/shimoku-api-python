@@ -5,6 +5,7 @@ from copy import copy, deepcopy
 from typing import Optional, List, Tuple, Dict
 import shimoku_api_python as shimoku
 import pandas as pd
+import subprocess
 
 from bs4 import BeautifulSoup
 
@@ -312,6 +313,20 @@ async def get_linked_data_set_info(
     return referenced_data_sets, mappings
 
 
+async def code_gen_read_csv_from_data_set(self: PlotApi, data_set: DataSet, name: str) -> str:
+    """ Generate code for reading a csv file from a data set.
+    :param data_set: data set to generate code from
+    :param name: name of the data set
+    :return: code line
+    """
+    data_point = (await data_set.get_one_data_point()).cascade_to_dict()
+    parse_dates = []
+    for key, value in data_point.items():
+        if 'date' in key and value is not None:
+            parse_dates.append(key)
+    return f'pd.read_csv("data/{name}.csv"{f", parse_dates={parse_dates}" if parse_dates else ""})'
+
+
 async def code_gen_from_indicator(
         self: PlotApi, report: Report, report_params: List[str], properties: dict
 ) -> List[str]:
@@ -360,7 +375,10 @@ async def code_gen_from_echarts(
         data_arg += ['    data_is_not_df=True,']
         fields = '["data"]'
     elif data_set is not None:
-        data_arg = [f'pd.read_csv("data/{change_data_set_name_with_report(data_set, report)}.csv"),']
+        data_arg = [
+            (await code_gen_read_csv_from_data_set(self, data_set, change_data_set_name_with_report(data_set, report)))
+            + ','
+        ]
 
     options_code = code_gen_from_dict(echart_options, 4)
 
@@ -400,10 +418,46 @@ async def code_gen_from_table(
     :param properties: properties of the report
     :return: list of code lines
     """
-    return ['pass']
+    report_data_set: Report.ReportDataSet = (await report.get_report_data_sets())[0]
+    data_set_id = report_data_set['dataSetId']
+    data_set = await self._app.get_data_set(data_set_id)
+    data_arg = await code_gen_read_csv_from_data_set(self, data_set, change_data_set_name_with_report(data_set, report))
+    if data_set_id in shared_data_sets:
+        data_arg = f'"{data_set["name"]}",'
+    print_dict(properties)
+    table_params = []
+    # TODO: This will need to have the correct names for the columns
+    # TODO: Chips
+    mapping = properties['rows']['mapping']
+    if mapping:
+        table_params.append(f'    columns={list(mapping.values())},')
+    if properties['pagination']['pageSize'] != 10:
+        table_params.append(f'    page_size={properties["pagination"]["pageSize"]},')
+    if not properties['columnsButton']:
+        table_params.append(f'    columns_button=False,')
+    if not properties['filtersButton']:
+        table_params.append(f'    filters=False,')
+    if not properties['exportButton']:
+        table_params.append(f'    export_to_csv=False,')
+    if not properties['search']:
+        table_params.append(f'    search=False,')
+    if properties.get('sort'):
+        sort_field = properties['sort']['field']
+        sort_direction = properties['sort']['direction']
+        table_params.append(f'    initial_sort_column="{sort_field}",')
+        if sort_direction != 'asc':
+            table_params.append(f'    sort_descending=True,')
+
+    categorical_columns = [mapping[col_dict['field']]
+                           for col_dict in properties['columns'] if col_dict.get('type') == 'singleSelect']
+    if categorical_columns:
+        table_params.append(f'    categorical_columns={categorical_columns},')
+
     return [
         'shimoku_client.plt.table(',
+        f'    data={data_arg},',
         *report_params,
+        *table_params,
         ')'
     ]
 
@@ -426,6 +480,29 @@ async def code_gen_from_form(
     ]
 
 
+def code_gen_from_html_string(html_string: str):
+    """ Generate code for an html string.
+    :param html_string: html string to generate code from
+    :return: list of code lines
+    """
+    code_lines = []
+    current_line = ""
+    for c in html_string:
+        if c in ['\n', '\r']:
+            code_lines.append(current_line)
+            current_line = ""
+        elif c == '<':
+            code_lines.append(current_line)
+            current_line = '<'
+        elif c == ';' and len(current_line) > 60:
+            code_lines.append(current_line+';')
+            current_line = ""
+        else:
+            current_line += c
+
+    return [f'"{line}"' for line in code_lines if line]
+
+
 async def code_gen_from_html(
         self: PlotApi, report: Report
 ) -> List[str]:
@@ -434,24 +511,65 @@ async def code_gen_from_html(
     :param chartData: chartData of the report where the html is stored
     :return: list of code lines
     """
-    # TODO: The resilt of this proces doesnt result in the same html as the one in the report
-    # html = BeautifulSoup(report['chartData'][0]["value"].replace("'", "\\'").replace('"', '\\"'),
-    #                      "html.parser").prettify().replace("\n", "'\n" + " " * 9 + "'")
+
     html = report['chartData'][0]["value"].replace("'", "\\'").replace('"', '\\"')
+    html_lines = ['    ' + line for line in code_gen_from_html_string(html)]
+    if not html_lines:
+        return ['pass']
+    html_lines[-1] += ','
     code_lines = [
         'shimoku_client.plt.html(',
         f'    order={report["order"]},',
-        f"    html='{html}',",
     ]
     if report['sizeColumns'] != 12:
         code_lines.append(f'    cols_size={report["sizeColumns"]},')
-    if report['sizeRows']:
+    if report['sizeRows'] != 1:
         code_lines.append(f'    rows_size={report["sizeRows"]},')
     if report['sizePadding'] != '0,0,0,0':
         code_lines.append(f'    padding="{report["sizePadding"]}",')
-    code_lines.append(')')
+
+    code_lines.extend([f'    html={html_lines[0][4:]}', *html_lines[1:], ')'])
 
     return code_lines
+
+
+async def code_gen_from_button_modal(
+        self: PlotApi, report: Report, report_params: List[str]
+) -> List[str]:
+    modal_id = report['properties']['events']['onClick'][0]['params']['modalId']
+    modal = await self._app.get_report(modal_id)
+    return [
+        'shimoku_client.plt.modal_button(',
+        f'    modal="{modal["properties"]["hash"]}",',
+        *report_params,
+        ')'
+    ]
+
+
+async def code_gen_from_button_activity(
+        self: PlotApi, report: Report, report_params: List[str]
+) -> List[str]:
+    activity_id = report['properties']['events']['onClick'][0]['params']['activityId']
+    activity = await self._app.get_activity(activity_id)
+    return [
+        'shimoku_client.plt.activity_button(',
+        f'    activity_name="{activity["name"]}",',
+        *report_params,
+        ')'
+    ]
+
+
+async def code_gen_from_button_generic(
+        self: PlotApi, report: Report, report_params: List[str]
+) -> List[str]:
+    events_code = code_gen_from_dict(report['properties']['events'], 4)
+    return [
+        'shimoku_client.plt.button(',
+        *report_params,
+        f'    on_click_events={events_code[0][4:]}',
+        *events_code[1:],
+        ')'
+    ]
 
 
 async def code_gen_from_button(
@@ -461,7 +579,25 @@ async def code_gen_from_button(
     :param report: report to generate code from
     :return: list of code lines
     """
-    return []
+    report_params = [
+        f'    label="{report["properties"]["text"]}",',
+        f'    order={report["order"]},',
+    ]
+    if report['sizeColumns'] != 12:
+        report_params.append(f'    cols_size={report["sizeColumns"]},')
+    if report['sizeRows'] != 1:
+        report_params.append(f'    rows_size={report["sizeRows"]},')
+    if report['sizePadding'] != '0,0,0,0':
+        report_params.append(f'    padding="{report["sizePadding"]}",')
+    if report['properties']['align'] != 'stretch':
+        report_params.append(f'    align="{report["properties"]["align"]}",')
+
+    if report['properties']['events']['onClick'][0]['action'] == 'openModal':
+        return await code_gen_from_button_modal(self, report, report_params)
+    elif report['properties']['events']['onClick'][0]['action'] == 'openActivity':
+        return await code_gen_from_button_activity(self, report, report_params)
+    else:
+        return await code_gen_from_button_generic(self, report, report_params)
 
 
 async def code_gen_from_iframe(
@@ -655,6 +791,7 @@ async def code_gen_from_modal(self: PlotApi, tree: dict) -> List[str]:
         ')',
     ])
     code_lines.extend(await code_gen_tabs_and_other(self, tree))
+    code_lines.extend(['', 'shimoku_client.plt.pop_out_of_modal()'])
     return code_lines
 
 
@@ -677,9 +814,9 @@ async def code_gen_from_reports_tree(self: PlotApi, tree: dict, path: str) -> Li
     ]
     for modal in tree[path]['modals']:
         code_lines.extend(['', f'modal_{create_function_name(modal["modal"]["properties"]["hash"])}()'])
-    if len(tree[path]['modals']) > 0:
-        code_lines.extend(['', 'shimoku_client.plt.pop_out_of_modal()', ''])
-    code_lines.extend(await code_gen_tabs_and_other(self, tree[path]))
+    # if len(tree[path]['modals']) > 0:
+    #     code_lines.extend(['', 'shimoku_client.plt.pop_out_of_modal()', ''])
+    code_lines.extend(['', *await code_gen_tabs_and_other(self, tree[path])])
     return code_lines
 
 
@@ -688,9 +825,11 @@ async def create_data_set_file(self: PlotApi, data_set: DataSet, report: Optiona
     :param data_set: data set to create file for
     :param report: report to create file for
     """
-    data: List[dict] = [{k: v for k, v in dp.cascade_to_dict().items()
-                         if k not in ['id', 'dataSetId'] and v is not None}
-                         for dp in await data_set.get_data_points()]
+    data: List[dict] = [
+        {k: v for k, v in dp.cascade_to_dict().items()
+         if k not in ['id', 'dataSetId'] and v is not None}
+        for dp in await data_set.get_data_points()
+    ]
 
     menu_path = create_function_name(self._app['name'])
     if not os.path.exists(f'{output_path}/{menu_path}/data'):
@@ -701,6 +840,9 @@ async def create_data_set_file(self: PlotApi, data_set: DataSet, report: Optiona
 
     if len(data) > 1 or 'customField1' not in data[0]:
         data_as_df = pd.DataFrame(data)
+        for column in data_as_df:
+            if 'date' in column:
+                data_as_df[column] = pd.to_datetime(data_as_df[column]).dt.strftime('%Y-%m-%dT%H:%M:%S')
         output_name = data_set["name"] if report is None else change_data_set_name_with_report(data_set, report)
         data_as_df.to_csv(os.path.join(f'{output_path}/{menu_path}/data', f'{output_name}.csv'), index=False)
         if 'import pandas as pd' not in imports_code_lines:
@@ -728,7 +870,7 @@ async def code_gen_shared_data_sets(self: PlotApi) -> List[str]:
     if len(dfs) > 0:
         code_lines.extend([
             "    dfs={",
-            *[f'        "{ds["name"]}": pd.read_csv("data/{ds["name"]}.csv"),' for ds in dfs],
+            *[f'        "{ds["name"]}": {await code_gen_read_csv_from_data_set(self, ds, ds["name"])},' for ds in dfs],
             "    },",
         ])
     if len(custom) > 0:
@@ -816,12 +958,11 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
 
     main_code_lines = [
         'shimoku_client = shimoku.Client(',
-        '    access_token="/",',
-        '    universe_id="5c22ba15-c32d-4f4f-9f3d-7c2d331a87a4",',
         '    async_execution=True,',
+        '    environment="develop",',
         '    verbosity="INFO",',
         ')',
-        'shimoku_client.set_workspace("34b9c913-ba02-47cf-a9cf-cdefb17f8b03")',
+        'shimoku_client.set_workspace()',
         f'shimoku_client.set_menu_path("{self._app["name"]}")',
         'shimoku_client.plt.clear_menu_path()',
         *shared_data_sets_code_lines,
@@ -846,18 +987,19 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
     with open(os.path.join(output_path, menu_path, 'main.py'), 'w') as f:
         f.write('\n'.join(code_lines))
 
+    # # apply black formatting
+    # subprocess.run(["black", "-l", "60", os.path.join(output_path, menu_path)])
+
 
 s = shimoku.Client(
-    access_token='/',
-    universe_id='5c22ba15-c32d-4f4f-9f3d-7c2d331a87a4',
     verbosity='INFO',
-    environment='local',
-    async_execution=True,
-    local_port=8000,
+    environment='develop',
+    async_execution=True
 )
-s.set_workspace('34b9c913-ba02-47cf-a9cf-cdefb17f8b03')
+s.set_workspace()
 print([app['name'] for app in s.workspaces.get_workspace_menu_paths(s.workspace_id)])
-s.set_menu_path('Food')
+#TODO dont create nan values
+s.set_menu_path('test-free-echarts')
 
 output_path = 'generated_code'
 generate_code(s.plt)
