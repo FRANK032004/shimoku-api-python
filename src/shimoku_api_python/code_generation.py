@@ -324,7 +324,7 @@ async def code_gen_read_csv_from_data_set(self: PlotApi, data_set: DataSet, name
     for key, value in data_point.items():
         if 'date' in key and value is not None:
             parse_dates.append(key)
-    return f'pd.read_csv("data/{name}.csv"{f", parse_dates={parse_dates}" if parse_dates else ""})'
+    return f'pd.read_csv("data/{name}.csv"{f", parse_dates={parse_dates}" if parse_dates else ""}).fillna("")'
 
 
 async def code_gen_from_indicator(
@@ -600,6 +600,38 @@ async def code_gen_from_button(
         return await code_gen_from_button_generic(self, report, report_params)
 
 
+async def code_gen_from_filter(
+        self: PlotApi, report: Report
+) -> List[str]:
+    """ Generate code for a filter report.
+    :param report: report to generate code from
+    :return: list of code lines
+    """
+    filter = report['properties']['filter'][0]
+    field_name = filter['field']
+    mapping = report['properties']['mapping'][0]
+    field = mapping[field_name]
+    data_set = await self._app.get_data_set(mapping['id'])
+    report_params = [
+        f'    order={report["order"]},',
+        f'    data="{data_set["name"]}",',
+        f'    field="{field}",',
+    ]
+    if report['sizeColumns'] != 4:
+        report_params.append(f'    cols_size={report["sizeColumns"]},')
+    if report['sizeRows'] != 1:
+        report_params.append(f'    rows_size={report["sizeRows"]},')
+    if report['sizePadding'] != '0,0,0,0':
+        report_params.append(f'    padding="{report["sizePadding"]}",')
+    if filter['inputType'] == 'CATEGORICAL_MULTI':
+        report_params.append(f'    multi_select=True,')
+    return [
+        'shimoku_client.plt.filter(',
+        *report_params,
+        ')'
+    ]
+
+
 async def code_gen_from_iframe(
         self: PlotApi, report: Report
 ) -> List[str]:
@@ -673,6 +705,8 @@ async def code_gen_from_other(
         code_lines.extend(await code_gen_from_annotated_echart(self, report, report_params, properties))
     elif report['reportType'] == 'BUTTON':
         code_lines.extend(await code_gen_from_button(self, report))
+    elif report['reportType'] == 'FILTERDATASET':
+        code_lines.extend(await code_gen_from_filter(self, report))
     else:
         code_lines.extend([f"shimoku_client.add_report({report['reportType']}, order={report['order']}, data=dict())"])
 
@@ -987,8 +1021,8 @@ async def generate_code(self: PlotApi, file_name: Optional[str] = None):
     with open(os.path.join(output_path, menu_path, 'main.py'), 'w') as f:
         f.write('\n'.join(code_lines))
 
-    # # apply black formatting
-    # subprocess.run(["black", "-l", "60", os.path.join(output_path, menu_path)])
+    # apply black formatting
+    # subprocess.run(["black", "-l", "80", os.path.join(output_path, menu_path)])
 
 
 s = shimoku.Client(
@@ -999,7 +1033,7 @@ s = shimoku.Client(
 s.set_workspace()
 print([app['name'] for app in s.workspaces.get_workspace_menu_paths(s.workspace_id)])
 #TODO dont create nan values
-s.set_menu_path('test-free-echarts')
+s.set_menu_path('test-filters')
 
 output_path = 'generated_code'
 generate_code(s.plt)
