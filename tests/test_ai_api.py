@@ -61,9 +61,10 @@ AI_FUNCTION_ID_TO_TEST = '355427f5-6fb1-45ea-82e9-a2755005b8aa'
 MENU_PATH = 'test-ai'
 MODEL_NAME = 'test-model'
 
-s.menu_paths.delete_all_menu_path_files(name=MENU_PATH, with_shimoku_generated=True)
-s.menu_paths.delete_all_menu_path_activities(name=MENU_PATH, with_linked_to_templates=True)
-s.menu_paths.delete_menu_path(name=MENU_PATH)
+if MENU_PATH in {menu['name'] for menu in s.workspaces.get_workspace_menu_paths(business_id)}:
+    s.menu_paths.delete_all_menu_path_files(name=MENU_PATH, with_shimoku_generated=True)
+    s.menu_paths.delete_all_menu_path_activities(name=MENU_PATH, with_linked_to_templates=True)
+    s.menu_paths.delete_menu_path(name=MENU_PATH)
 
 s.set_menu_path(name=MENU_PATH)
 

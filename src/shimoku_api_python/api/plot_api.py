@@ -175,7 +175,8 @@ class PlotApi:
         touched_data_set_ids = []
         if self._current_path is not None:
             path = create_normalized_name(self._current_path)
-            reports = [report for report in reports if create_normalized_name(report['path']) == path]
+            reports = [report for report in reports
+                       if report['path'] and create_normalized_name(report['path']) == path]
         else:
             touched_data_set_ids = [ds['id'] for ds in await self._app.get_data_sets()]
 

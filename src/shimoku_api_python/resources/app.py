@@ -283,7 +283,7 @@ class App(Resource):
         """
         data_set: DataSet = await self.get_data_set(uuid, name)
         mapping, res_sort = await data_set.create_data_points(
-            data_points=data.to_dict(orient='records') if isinstance(data, pd.DataFrame) else data,
+            data_points=pd.DataFrame(data) if isinstance(data, list) and not dump_whole else data,
             sort=sort, dump_whole=dump_whole
         )
         return mapping, data_set, res_sort
