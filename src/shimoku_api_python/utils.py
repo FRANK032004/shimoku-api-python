@@ -8,12 +8,40 @@ from enum import Enum
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
-import socket
 
 from shimoku_api_python.resources.data_set import convert_input_data_to_db_items
 from shimoku_api_python.execution_logger import logging_before_and_after, log_error
 
 logger = logging.getLogger(__name__)
+
+
+def change_data_set_name_with_report(data_set, report):
+    """ Change the name of a data set to include the report name.
+    :param data_set: data set to change name for
+    :param report: report to change name for
+    """
+    return data_set["name"].replace(report['id'], report['properties']['hash'])
+
+
+def create_function_name(name: Optional[str]) -> str:
+    """ Create a valid function name from a string
+    :param name: string to create function name from
+    :return: valid function name
+    """
+
+    def check_correct_character(character: str) -> bool:
+        """ Check if a character is valid for a function name
+        :param character: character to check
+        :return: True if character is valid, False otherwise
+        """
+        return character.isalnum() or character in ['_', '-', ' ']
+
+    if name is None:
+        return 'no_path'
+    # Change Uppercase to '_' + lowercase if previous character is in abecedary
+    name = ''.join(['_' + c.lower() if c.isupper() and i > 0 and name[i - 1].isalpha() else c
+                    for i, c in enumerate(name) if check_correct_character(c)])
+    return create_normalized_name(name).replace('-', '_')
 
 
 def create_normalized_name(name: str) -> str:
