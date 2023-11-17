@@ -62,47 +62,11 @@ class ResourceCache:
             endpoint: str = f'{self._parent["base_url"]}{self._parent.resource_type}/' \
                             f'{self._parent["id"]}/{self._resource_plural}'
 
-            if self._resource_class.resource_type == 'activityTemplate' and None:
-                resources_raw = {'items': [{
-                    'id': 'test1',
-                    'name': 'TEST WORKFLOW',
-                    'description': 'Test Workflow from data team',
-                    'minRunInterval': 30,
-                    'enabled': True,
-                    'version': '1.0.2',
-                    'tags': ['testWorkflow', 'type:test'],
-                    'inputSettings':
-                        '{"test_mandatory": {"datatype": "str", "description": "Mandatory text added inside the output file", "mandatory": true},'
-                        '"text_optional": {"datatype": "str", "description": "Optional text added inside the output file", "mandatory": false}}'
-                }, {
-                    'id': 'test2',
-                    'name': 'TEST WORKFLOW',
-                    'description': 'Test Workflow from data team',
-                    'minRunInterval': 30,
-                    'enabled': True,
-                    'version': '1.0.2',
-                    'tags': ['testWorkflow', 'type:test'],
-                    'inputSettings':
-                        '{"test_mandatory": {"datatype": "str", "description": "Mandatory text added inside the output file", "mandatory": true},'
-                        '"text_optional": {"datatype": "str", "description": "Optional text added inside the output file", "mandatory": false}}'
-                }, {
-                    'id': 'test3',
-                    'name': 'TEST WORKFLOW',
-                    'description': 'Test Workflow from data team',
-                    'minRunInterval': 30,
-                    'enabled': True,
-                    'version': '1.0.10',
-                    'tags': ['testWorkflow', 'type:test'],
-                    'inputSettings':
-                        '{"test_mandatory": {"datatype": "str", "description": "Mandatory text added inside the output file", "mandatory": true},'
-                        '"text_optional": {"datatype": "str", "description": "Optional text added inside the output file", "mandatory": false}}'
-                }]}
-            else:
-                resources_raw: Dict = await (
-                    self._parent.api_client.query_element(
-                        endpoint=endpoint, method='GET', limit=limit
-                    )
+            resources_raw: Dict = await (
+                self._parent.api_client.query_element(
+                    endpoint=endpoint, method='GET', limit=limit
                 )
+            )
             try:
                 resources = resources_raw.get('items') if isinstance(resources_raw, dict) else resources_raw
                 if not isinstance(resources, list):
