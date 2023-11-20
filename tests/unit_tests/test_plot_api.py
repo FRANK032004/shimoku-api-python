@@ -14,7 +14,7 @@ from copy import deepcopy
 from utils import initiate_shimoku
 
 s = initiate_shimoku()
-s.reuse_data_sets()
+# s.reuse_data_sets()
 workspace_id: str = getenv('BUSINESS_ID')
 
 s.set_workspace(uuid=workspace_id)
@@ -895,7 +895,7 @@ def waterfall():
         order=2,
         variant='clean'
     )
-    s.reuse_data_sets()
+    # s.reuse_data_sets()
 
 
 def line_with_confidence_area():
@@ -3693,7 +3693,7 @@ class TestPlotApi(unittest.TestCase):
         table()
         s.update_data_sets()
         table_with_labels()
-        s.reuse_data_sets()
+        # s.reuse_data_sets()
         annotation_chart()
         s.run()
         print(f'Total elapsed time: {perf_counter() - init_time:.2f} s')

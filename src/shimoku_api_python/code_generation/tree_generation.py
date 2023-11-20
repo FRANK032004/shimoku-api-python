@@ -2,13 +2,12 @@ from typing import Optional, List, Tuple, Dict
 
 from shimoku_api_python.resources.app import App
 from shimoku_api_python.resources.data_set import DataSet
-from shimoku_api_python.resources.business import Business
 from shimoku_api_python.resources.report import Report
 from shimoku_api_python.resources.reports.modal import Modal
 from shimoku_api_python.resources.reports.tabs_group import TabsGroup
 from shimoku_api_python.utils import change_data_set_name_with_report
 
-from file_generator import CodeGenFileHandler
+from shimoku_api_python.code_generation.file_generator import CodeGenFileHandler
 
 import pandas as pd
 import asyncio
@@ -22,9 +21,8 @@ logger = logging.getLogger(__name__)
 class CodeGenTree:
     """ Class for generating code generation tree. """
 
-    def __init__(self, business: Business, app: App, file_generator: CodeGenFileHandler):
+    def __init__(self, app: App, file_generator: CodeGenFileHandler):
         self._app = app
-        self._business = business
         self._file_generator = file_generator
         self.custom_data_sets_with_data = {}
         self.actual_bentobox: Optional[Dict] = None

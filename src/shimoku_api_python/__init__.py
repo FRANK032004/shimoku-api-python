@@ -17,6 +17,8 @@ from shimoku_api_python.api.ping_api import PingApi
 from shimoku_api_python.api.activity_metadata_api import ActivityMetadataApi
 from shimoku_api_python.websockets_server import EventType
 
+from shimoku_api_python.code_generation.code_generation import BusinessCodeGen
+
 from shimoku_api_python.utils import create_normalized_name, ShimokuPalette
 
 from shimoku_api_python.client import ApiClient
@@ -239,6 +241,26 @@ class Client(object):
         self.plt.change_path(path)
         if data_names:
             logger.info(f'Shared data entries will no longer be available: {data_names}, set them again if needed.')
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def generate_code(
+        self, output_path: str = 'generated_code',
+        menu_paths: Optional[list[str]] = None, use_black_formatter: bool = False
+    ):
+        """ Generate code for a set workspace.
+        menu_paths: List of menu paths to generate code from, if None all menu paths are used.
+        """
+        if not self._business_object:
+            log_error(logger, 'Workspace not set. Please use set_workspace() method first.', AttributeError)
+        await BusinessCodeGen(self._business_object, output_path, self.epc).generate_code(
+            environment=self._api_client.environment,
+            access_token=self._api_client.access_token,
+            universe_id=self.universe_id,
+            business_id=self.workspace_id,
+            menu_paths=menu_paths,
+            use_black_formatter=use_black_formatter
+        )
 
     @logging_before_and_after(logging_level=logger.info)
     def set_config(self, config: Dict):

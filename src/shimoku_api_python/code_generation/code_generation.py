@@ -2,7 +2,6 @@ import asyncio
 import os
 from copy import copy, deepcopy
 from typing import Optional, List, Tuple, Dict
-import shimoku_api_python as shimoku
 import subprocess
 
 from shimoku_api_python.resources.business import Business
@@ -11,11 +10,12 @@ from shimoku_api_python.resources.data_set import DataSet
 from shimoku_api_python.resources.report import Report
 from shimoku_api_python.resources.reports.modal import Modal
 from shimoku_api_python.resources.reports.tabs_group import TabsGroup
-from shimoku_api_python.async_execution_pool import async_auto_call_manager, ExecutionPoolContext
-from shimoku_api_python.utils import revert_uuids_from_dict, create_function_name, change_data_set_name_with_report
+from shimoku_api_python.async_execution_pool import ExecutionPoolContext
+from shimoku_api_python.utils import revert_uuids_from_dict, create_function_name, change_data_set_name_with_report, \
+    create_normalized_name
 
-from tree_generation import CodeGenTree
-from file_generator import CodeGenFileHandler
+from shimoku_api_python.code_generation.tree_generation import CodeGenTree
+from shimoku_api_python.code_generation.file_generator import CodeGenFileHandler
 
 import logging
 from shimoku_api_python.execution_logger import logging_before_and_after, log_error
@@ -23,22 +23,23 @@ from shimoku_api_python.execution_logger import logging_before_and_after, log_er
 logger = logging.getLogger(__name__)
 
 
-class AppCodeGenerator:
+class AppCodeGen:
     """ Class for generating code from a menu path. """
 
-    def __init__(self, business: Business, app: App, output_path: str, epc: ExecutionPoolContext):
+    def __init__(self, business_id: str, app: App, output_path: str, epc: ExecutionPoolContext):
         self.epc = epc
-        self._business = business
         self._app = app
+        self.app_f_name = 'menu_path_' + create_function_name(app['name'])
+        self._business_id = business_id
         self._output_path = (f'{output_path}/'
-                             f'{create_function_name(business["name"])}/'
-                             f'{create_function_name(app["name"])}')
+                             f'{self.app_f_name}')
         self._actual_bentobox: Optional[Dict] = None
         self._imports_code_lines = [
+            'import os',
             'import shimoku_api_python as shimoku'
         ]
         self._file_generator: CodeGenFileHandler = CodeGenFileHandler(self._output_path)
-        self._code_gen_tree: CodeGenTree = CodeGenTree(business, app, self._file_generator)
+        self._code_gen_tree: CodeGenTree = CodeGenTree(app, self._file_generator)
 
     @staticmethod
     def _code_gen_value(v):
@@ -62,34 +63,36 @@ class AppCodeGenerator:
         return v
 
     def _code_gen_from_list(self, l, deep=0):
-        code_lines = [' ' * deep + '[']
-        deep += 4
-        for element in l:
-            if isinstance(element, dict):
-                code_lines.extend(self._code_gen_from_dict(element, deep))
-            elif isinstance(element, list):
-                code_lines.extend(self._code_gen_from_list(element, deep))
-            else:
-                code_lines.append(' ' * deep + f'{self._code_gen_value(element)},')
-        deep -= 4
-        code_lines.append(' ' * deep + '],')
-        return code_lines
+        return [' ' * deep + str(l) + ',']
+        # code_lines = [' ' * deep + '[']
+        # deep += 4
+        # for element in l:
+        #     if isinstance(element, dict):
+        #         code_lines.extend(self._code_gen_from_dict(element, deep))
+        #     elif isinstance(element, list):
+        #         code_lines.extend(self._code_gen_from_list(element, deep))
+        #     else:
+        #         code_lines.append(' ' * deep + f'{self._code_gen_value(element)},')
+        # deep -= 4
+        # code_lines.append(' ' * deep + '],')
+        # return code_lines
 
     def _code_gen_from_dict(self, d, deep=0):
-        code_lines = [' ' * deep + '{']
-        deep += 4
-        for k, v in d.items():
-            if isinstance(v, (dict, list)):
-                code_lines.append(' ' * deep + f'"{k}":')
-                if isinstance(v, dict):
-                    code_lines.extend(self._code_gen_from_dict(v, deep))
-                elif isinstance(v, list):
-                    code_lines.extend(self._code_gen_from_list(v, deep))
-            else:
-                code_lines.append(' ' * deep + f'"{k}": ' + f'{self._code_gen_value(v)},')
-        deep -= 4
-        code_lines.append(' ' * deep + '},')
-        return code_lines
+        return [' ' * deep + str(d) + ',']
+        # code_lines = [' ' * deep + '{']
+        # deep += 4
+        # for k, v in d.items():
+        #     if isinstance(v, (dict, list)):
+        #         code_lines.append(' ' * deep + f'"{k}":')
+        #         if isinstance(v, dict):
+        #             code_lines.extend(self._code_gen_from_dict(v, deep))
+        #         elif isinstance(v, list):
+        #             code_lines.extend(self._code_gen_from_list(v, deep))
+        #     else:
+        #         code_lines.append(' ' * deep + f'"{k}": ' + f'{self._code_gen_value(v)},')
+        # deep -= 4
+        # code_lines.append(' ' * deep + '},')
+        # return code_lines
 
     def _delete_default_properties(self, properties: dict, default_properties: dict) -> dict:
         """ Delete default properties from a report.
@@ -116,7 +119,8 @@ class AppCodeGenerator:
         rds: List[Report.ReportDataSet] = []
         for rds_id in rds_ids_in_order:
             rds.append(next(rd for rd in unordered_rds if rd['id'] == rds_id))
-        referenced_data_sets = {d_id: await self._app.get_data_set(d_id) for d_id in set([rd['dataSetId'] for rd in rds])}
+        referenced_data_sets = {d_id: await self._app.get_data_set(d_id) for d_id in
+                                set([rd['dataSetId'] for rd in rds])}
         mappings = [(rd['dataSetId'], rd['properties']['mapping']) for rd in rds]
         return referenced_data_sets, mappings
 
@@ -132,7 +136,10 @@ class AppCodeGenerator:
         for key, value in data_point.items():
             if 'date' in key and value is not None:
                 parse_dates.append(key)
-        return f'pd.read_csv("data/{name}.csv"{f", parse_dates={parse_dates}" if parse_dates else ""}).fillna("")'
+        return (f'pd.read_csv('
+                f'f"{{data_folder_path}}/{name}.csv"{f", parse_dates={parse_dates}" if parse_dates else ""})'
+                f'.fillna("")'
+                )
 
     async def _code_gen_from_indicator(
             self, report_params: List[str], properties: dict
@@ -178,7 +185,7 @@ class AppCodeGenerator:
         elif data_set_id in self._code_gen_tree.custom_data_sets_with_data:
             val = self._code_gen_tree.custom_data_sets_with_data[data_set_id]
             data_arg = self._code_gen_from_dict(val, 4) \
-                       if isinstance(val, dict) else self._code_gen_from_list(val, 4)
+                if isinstance(val, dict) else self._code_gen_from_list(val, 4)
             data_arg[0] = data_arg[0][4:]
             data_arg += ['    data_is_not_df=True,']
             fields = '["data"]'
@@ -230,7 +237,7 @@ class AppCodeGenerator:
             'shimoku_client.plt.annotated_chart(',
             f'    data=[{", ".join(data_args)}],',
             '    x="dateField1",',
-            f'    y={["intField1"]*len(data_args)},',
+            f'    y={["intField1"] * len(data_args)},',
             *slider_params,
             *report_params,
             ')'
@@ -356,7 +363,7 @@ class AppCodeGenerator:
                 code_lines.append(current_line)
                 current_line = '<'
             elif c == ';' and len(current_line) > 60:
-                code_lines.append(current_line+';')
+                code_lines.append(current_line + ';')
                 current_line = ""
             else:
                 current_line += c
@@ -560,7 +567,8 @@ class AppCodeGenerator:
         elif report['reportType'] == 'FILTERDATASET':
             code_lines.extend(await self._code_gen_from_filter(report))
         else:
-            code_lines.extend([f"shimoku_client.add_report({report['reportType']}, order={report['order']}, data=dict())"])
+            code_lines.extend(
+                [f"shimoku_client.add_report({report['reportType']}, order={report['order']}, data=dict())"])
 
         if is_last and self._actual_bentobox is not None:
             self._actual_bentobox = None
@@ -569,7 +577,7 @@ class AppCodeGenerator:
         return code_lines
 
     async def _code_gen_from_tabs_group(
-        self, tree: dict, is_last: bool = False
+            self, tree: dict, is_last: bool = False
     ) -> List[str]:
         """ Generate code for a tabs group.
         :param tree: tree of reports
@@ -644,7 +652,7 @@ class AppCodeGenerator:
         return code_lines
 
     async def _code_gen_tabs_and_other(
-        self, tree: dict
+            self, tree: dict
     ) -> List[str]:
         """ Generate code for tabs and other components.
         :param tree: tree of reports
@@ -766,88 +774,137 @@ class AppCodeGenerator:
         """
         await self._code_gen_tree.generate_tree()
         if self._code_gen_tree.needs_pandas:
-            self._imports_code_lines.append('import pandas as pd')
+            self._imports_code_lines.extend(['import pandas as pd'])
 
         code_lines: List[str] = []
+        function_calls_code_lines: List[str] = []
 
         shared_data_sets_code_lines = await self._code_gen_shared_data_sets()
+        scripts_imports = copy(self._imports_code_lines)
         for path in self._code_gen_tree.tree:
             function_code_lines = await self._code_gen_from_reports_tree(path)
-
+            path_name = 'sub_path_' + create_function_name(path) if path else 'no_path'
             script_code_lines = [
-                *self._imports_code_lines,
+                *scripts_imports,
+                '',
+                '',
+                'data_folder_path = os.path.dirname(os.path.abspath(__file__)) + "/data"',
                 *await self._code_gen_tabs_functions(path),
                 *await self._code_gen_modals_functions(path),
                 '',
                 '',
-                f'def {create_function_name(path)}(shimoku_client: shimoku.Client):',
+                f'def {path_name}(shimoku_client: shimoku.Client):',
                 *['    ' + line for line in function_code_lines],
                 '',
             ]
-            self._file_generator.generate_script_file(create_function_name(path), script_code_lines)
-
-        function_calls_code_lines = []
-        for path in self._code_gen_tree.tree:
-            script_name = create_function_name(path) if path else 'no_path'
+            self._file_generator.generate_script_file(path_name, script_code_lines)
+            self._imports_code_lines.append(
+                f'from .{path_name} import {path_name}'
+            )
             function_calls_code_lines.extend([
                 '',
                 f'shimoku_client.set_menu_path("{self._app["name"]}"' + (f', "{path}")' if path is not None else ')'),
-                f'{create_function_name(path)}(shimoku_client)'
+                f'{path_name}(shimoku_client)'
             ])
-            self._imports_code_lines.extend([f'from {script_name} import {script_name}'])
 
         main_code_lines = [
-            'shimoku_client = shimoku.Client(',
-            '    async_execution=True,',
-            '    environment="develop",',
-            '    verbosity="INFO",',
-            ')',
-            'shimoku_client.set_workspace()',
             f'shimoku_client.set_menu_path("{self._app["name"]}")',
             'shimoku_client.plt.clear_menu_path()',
             *shared_data_sets_code_lines,
             *function_calls_code_lines,
-            '',
-            'shimoku_client.run()',
         ]
 
         code_lines.extend([
             *self._imports_code_lines,
             '',
             '',
-            f'def {create_function_name(self._app["name"])}():',
+            'data_folder_path = os.path.dirname(os.path.abspath(__file__)) + "/data"',
+            '',
+            '',
+            f'def {self.app_f_name}(shimoku_client: shimoku.Client):',
             *['    ' + line for line in main_code_lines],
-            '',
-            '',
-            'if __name__ == "__main__":',
-            f'   {create_function_name(self._app["name"])}()',
             ''
         ])
 
         self._file_generator.generate_script_file('app', code_lines)
+        # Create an __init__.py file for the imports to work
+        self._file_generator.generate_script_file('__init__', [''])
 
-        # apply black formatting
-        # subprocess.run(["black", "-l", "80", os.path.join(self._output_path)])
 
-    @async_auto_call_manager(execute=True)
-    @logging_before_and_after(logger.info)
-    async def sync_generate_code(self):
-        """ Use the resources in the API to generate code_lines for the SDK. Create a file in the specified path with the
-        generated code_lines.
-        :param business_name: name of the business
+class BusinessCodeGen:
+
+    def __init__(self, business: Business, output_path: str, epc: ExecutionPoolContext):
+        self._business = business
+        self._output_path = f'{output_path}/{business["id"]}'
+        self._file_generator = CodeGenFileHandler(self._output_path)
+        self.epc = epc
+
+    async def generate_code(
+            self, environment: str,
+            access_token: str,
+            universe_id: str,
+            business_id: str,
+            menu_paths: Optional[List[str]] = None,
+            use_black_formatter: bool = True
+    ):
+        """ Use the resources in the API to generate code_lines for the SDK. Create a file in
+        the specified path with the generated code_lines.
+        :param environment: environment to use
+        :param access_token: access token to use
+        :param universe_id: universe id to use
+        :param business_id: business id to use
+        :param menu_paths: list of menu paths to generate code for
+        :param use_black_formatter: whether to use black formatter
         """
-        await self.generate_code()
+        import_code_lines: List[str] = [
+            'import shimoku_api_python as shimoku'
+        ]
+        main_code_lines: List[str] = [
+            'shimoku_client = shimoku.Client(',
+        ]
+        if access_token != 'local':
+            main_code_lines.extend([
+                f'    access_token="{access_token}",',
+                f'    universe_id="{universe_id}",'
+            ])
+        main_code_lines.extend([
+            f'    environment="{environment}",',
+            f'    verbosity="INFO",',
+            ')',
+            f'shimoku_client.set_workspace("{business_id}")',
+            '',
+        ])
+        exec_code_lines: List[str] = [
+            '',
+            'if __name__ == "__main__":',
+            '    main()',
+            ''
+        ]
+        if menu_paths:
+            menu_paths = [create_normalized_name(menu_path) for menu_path in menu_paths]
 
+        for app in await self._business.get_apps():
+            if menu_paths is None or app['normalizedName'] in menu_paths:
+                app_code_gen = AppCodeGen(business_id, app, self._output_path, self.epc)
+                await app_code_gen.generate_code()
+                import_code_lines.append(f'from .{app_code_gen.app_f_name}.app import {app_code_gen.app_f_name}')
+                main_code_lines.append(f'{app_code_gen.app_f_name}(shimoku_client)')
+        main_code_lines.extend(['', 'shimoku_client.run()'])
+        self._file_generator.generate_script_file(
+            'main',
+            [
+                *import_code_lines,
+                '',
+                '',
+                'def main():',
+                *['    ' + line for line in main_code_lines],
+                '',
+                *exec_code_lines
+            ]
+        )
+        # Create an __init__.py file for the imports to work
+        self._file_generator.generate_script_file('__init__', [''])
 
-s = shimoku.Client(
-    verbosity='INFO',
-    environment='develop',
-    async_execution=True
-)
-s.set_workspace()
-print([app['name'] for app in s.workspaces.get_workspace_menu_paths(s.workspace_id)])
-#TODO dont create nan values
-for app in s.workspaces.get_workspace_menu_paths(s.workspace_id):
-    s.set_menu_path(app['name'])
-    code_gen = AppCodeGenerator(s._business_object, s._app_object, 'generated_code', s.plt.epc)
-    code_gen.sync_generate_code()
+        if use_black_formatter:
+            # apply black formatting
+            subprocess.run(["black", "-l", "80", os.path.join(self._output_path)])
