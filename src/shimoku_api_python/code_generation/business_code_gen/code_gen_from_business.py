@@ -18,6 +18,38 @@ class BusinessCodeGen:
         self._file_generator = CodeGenFileHandler(self._output_path)
         self.epc = epc
 
+    def _code_gen_from_list(self, l, deep=0):
+        return [' ' * deep + str(l) + ',']
+        # code_lines = [' ' * deep + '[']
+        # deep += 4
+        # for element in l:
+        #     if isinstance(element, dict):
+        #         code_lines.extend(self._code_gen_from_dict(element, deep))
+        #     elif isinstance(element, list):
+        #         code_lines.extend(self._code_gen_from_list(element, deep))
+        #     else:
+        #         code_lines.append(' ' * deep + f'{self._code_gen_value(element)},')
+        # deep -= 4
+        # code_lines.append(' ' * deep + '],')
+        # return code_lines
+
+    def _code_gen_from_dict(self, d, deep=0):
+        return [' ' * deep + str(d) + ',']
+        # code_lines = [' ' * deep + '{']
+        # deep += 4
+        # for k, v in d.items():
+        #     if isinstance(v, (dict, list)):
+        #         code_lines.append(' ' * deep + f'"{k}":')
+        #         if isinstance(v, dict):
+        #             code_lines.extend(self._code_gen_from_dict(v, deep))
+        #         elif isinstance(v, list):
+        #             code_lines.extend(self._code_gen_from_list(v, deep))
+        #     else:
+        #         code_lines.append(' ' * deep + f'"{k}": ' + f'{self._code_gen_value(v)},')
+        # deep -= 4
+        # code_lines.append(' ' * deep + '},')
+        # return code_lines
+
     async def generate_code(
             self, environment: str,
             access_token: str,
@@ -61,13 +93,42 @@ class BusinessCodeGen:
         ]
         if menu_paths:
             menu_paths = [create_normalized_name(menu_path) for menu_path in menu_paths]
+        apps = [app for app in sorted(await self._business.get_apps(), key=lambda x: x['order'])
+                if menu_paths is None or app['normalizedName'] in menu_paths]
+        extra_apps_for_dashboard = {}
+        last_dashboard = None
+        dashboards = sorted(await self._business.get_dashboards(), key=lambda x: x['order'])
+        for app in apps:
+            app_id = app['id']
+            app_code_gen = AppCodeGen(app, self._output_path, self.epc)
 
-        for app in await self._business.get_apps():
-            if menu_paths is None or app['normalizedName'] in menu_paths:
-                app_code_gen = AppCodeGen(app, self._output_path, self.epc)
-                await app_code_gen.generate_code()
-                import_code_lines.append(f'from .{app_code_gen.app_f_name}.app import {app_code_gen.app_f_name}')
-                main_code_lines.append(f'{app_code_gen.app_f_name}(shimoku_client)')
+            await app_code_gen.generate_code()
+
+            import_code_lines.append(f'from .{app_code_gen.app_f_name}.app import {app_code_gen.app_f_name}')
+            aux_code_lines = []
+            first_dashboard, *extra_dashboards = [dashboard
+                                                  for dashboard in dashboards
+                                                  if app_id in await dashboard.list_app_ids()]
+            if first_dashboard['name'] != last_dashboard:
+                aux_code_lines.append(f'shimoku_client.set_board("{first_dashboard["name"]}")')
+                last_dashboard = first_dashboard['name']
+            for dashboard in extra_dashboards:
+                extra_apps_for_dashboard.setdefault(dashboard['name'], []).append(app['name'])
+
+            aux_code_lines.append(f'{app_code_gen.app_f_name}(shimoku_client)')
+            main_code_lines.extend(aux_code_lines)
+
+        for dashboard_name, app_names in extra_apps_for_dashboard.items():
+            app_names_code_lines = self._code_gen_from_list(app_names, deep=4)
+            main_code_lines.extend([
+                '',
+                'shimoku_client.boards.group_menu_paths('
+                '    name="' + dashboard_name + '",',
+                f'    menu_path_names={app_names_code_lines[0][4:]}',
+                *app_names_code_lines[1:],
+                ')'
+            ])
+
         main_code_lines.extend(['', 'shimoku_client.run()'])
         self._file_generator.generate_script_file(
             'main',
