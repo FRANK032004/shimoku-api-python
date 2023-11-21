@@ -17,7 +17,7 @@ from shimoku_api_python.api.ping_api import PingApi
 from shimoku_api_python.api.activity_metadata_api import ActivityMetadataApi
 from shimoku_api_python.websockets_server import EventType
 
-from shimoku_api_python.code_generation.code_generation import BusinessCodeGen
+from shimoku_api_python.code_generation.business_code_gen.code_gen_from_business import BusinessCodeGen
 
 from shimoku_api_python.utils import create_normalized_name, ShimokuPalette
 
