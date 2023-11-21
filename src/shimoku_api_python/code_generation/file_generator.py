@@ -25,6 +25,10 @@ class CodeGenFileHandler:
             if 'date' in column:
                 data[column] = pd.to_datetime(data[column]).dt.strftime('%Y-%m-%dT%H:%M:%S')
 
+        if 'orderField1' in data.columns:
+            data = data.sort_values(by='orderField1')
+            data = data.drop(columns=['orderField1'])
+
         try:
             data.to_csv(
                 os.path.join(f'{self._output_path}/data', f'{file_name}.csv'), index=False
