@@ -23,6 +23,8 @@ def delete_default_properties(properties: dict, default_properties: dict) -> dic
     """
     properties = copy(properties)
     for key, value in default_properties.items():
+        if key not in properties:
+            continue
         if properties[key] == value:
             del properties[key]
         if isinstance(value, dict):
@@ -35,7 +37,7 @@ def delete_default_properties(properties: dict, default_properties: dict) -> dic
 
 
 async def code_gen_from_other_reports(
-        self: 'AppCodeGen', report: 'Report', is_last: bool
+        self: 'AppCodeGen', report: 'Report'
 ) -> List[str]:
     """ Generate code for a report that is not a tabs group.
     :param report: report to generate code from
@@ -54,20 +56,6 @@ async def code_gen_from_other_reports(
     report_params = [f'    {report_params_to_get[k]}=' + (f'"{(report[k])}",'
                                                           if isinstance(report[k], str) else f'{report[k]},')
                      for k in report if k in report_params_to_get]
-
-    if len(report['bentobox']):
-        if self._actual_bentobox is None or self._actual_bentobox['bentoboxId'] != report['bentobox']['bentoboxId']:
-            self._actual_bentobox = report['bentobox']
-
-            cols_size = self._actual_bentobox['bentoboxSizeColumns']
-            rows_size = self._actual_bentobox['bentoboxSizeRows']
-            code_lines.extend([
-                '',
-                f'shimoku_client.plt.set_bentobox(cols_size={cols_size}, rows_size={rows_size})'
-            ])
-    elif self._actual_bentobox is not None:
-        self._actual_bentobox = None
-        code_lines.append('shimoku_client.plt.pop_out_of_bentobox()')
 
     if report['reportType'] == 'INDICATOR':
         code_lines.extend(await code_gen_from_indicator(self, report_params, properties))
@@ -90,9 +78,5 @@ async def code_gen_from_other_reports(
     else:
         code_lines.extend(
             [f"shimoku_client.add_report({report['reportType']}, order={report['order']}, data=dict())"])
-
-    if is_last and self._actual_bentobox is not None:
-        self._actual_bentobox = None
-        code_lines.append('shimoku_client.plt.pop_out_of_bentobox()')
 
     return code_lines

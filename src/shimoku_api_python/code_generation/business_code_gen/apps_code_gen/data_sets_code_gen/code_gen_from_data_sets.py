@@ -1,7 +1,8 @@
-from typing import TYPE_CHECKING, List, Dict, Tuple
+from typing import TYPE_CHECKING, List, Dict, Tuple, Optional
 
 from shimoku_api_python.resources.report import Report
 from shimoku_api_python.resources.data_set import DataSet
+from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_dict, code_gen_from_list
 
 if TYPE_CHECKING:
     from ..code_gen_from_apps import AppCodeGen
@@ -20,13 +21,16 @@ async def get_linked_data_set_info(
     return referenced_data_sets, mappings
 
 
-async def code_gen_read_csv_from_data_set(data_set: DataSet, name: str) -> str:
+async def code_gen_read_csv_from_data_set(data_set: DataSet, name: str) -> Optional[str]:
     """ Generate code for reading a csv file from a data set.
     :param data_set: data set to generate code from
     :param name: name of the data set
     :return: code line
     """
-    data_point = (await data_set.get_one_data_point()).cascade_to_dict()
+    data_point = await data_set.get_one_data_point()
+    if data_point is None:
+        return None
+    data_point = data_point.cascade_to_dict()
     parse_dates = []
     for key, value in data_point.items():
         if 'date' in key and value is not None:
@@ -55,10 +59,14 @@ async def code_gen_from_shared_data_sets(self: 'AppCodeGen') -> List[str]:
         code_lines.append("shimoku_client.plt.set_shared_data(")
 
     if len(dfs) > 0:
+        dfs_code_lines = []
+        for ds in dfs:
+            data_line = await code_gen_read_csv_from_data_set(ds, ds["name"])
+            if data_line is not None:
+                dfs_code_lines.append(f'    "{ds["name"]}": {data_line},')
         code_lines.extend([
             "    dfs={",
-            *[f'        "{ds["name"]}": {await code_gen_read_csv_from_data_set(ds, ds["name"])},'
-              for ds in dfs],
+            *dfs_code_lines,
             "    },",
         ])
     if len(custom) > 0:
@@ -66,9 +74,9 @@ async def code_gen_from_shared_data_sets(self: 'AppCodeGen') -> List[str]:
         for ds in custom:
             custom_data = self._code_gen_tree.custom_data_sets_with_data[ds["id"]]
             if isinstance(custom_data, dict):
-                custom_data = self._code_gen_from_dict(custom_data, 8)
+                custom_data = code_gen_from_dict(custom_data, 8)
             else:
-                custom_data = self._code_gen_from_list(custom_data, 8)
+                custom_data = code_gen_from_list(custom_data, 8)
 
             code_lines.extend([
                 f'        "{ds["name"]}": {custom_data[0][8:]}',

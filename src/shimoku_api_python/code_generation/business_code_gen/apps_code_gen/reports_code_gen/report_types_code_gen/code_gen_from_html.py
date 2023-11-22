@@ -23,6 +23,8 @@ def code_gen_from_html_string(html_string: str):
             current_line = ""
         else:
             current_line += c
+    if current_line:
+        code_lines.append(current_line)
 
     return [f'"{line}"' for line in code_lines if line]
 

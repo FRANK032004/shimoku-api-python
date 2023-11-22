@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, List
 from shimoku_api_python.utils import change_data_set_name_with_report
 from ...data_sets_code_gen.code_gen_from_data_sets import code_gen_read_csv_from_data_set
+from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_dict
 if TYPE_CHECKING:
     from ...code_gen_from_apps import AppCodeGen
     from shimoku_api_python.resources.report import Report
@@ -66,6 +67,8 @@ async def code_gen_from_table(
     data_set_id = report_data_set['dataSetId']
     data_set = await self._app.get_data_set(data_set_id)
     data_arg = await code_gen_read_csv_from_data_set(data_set, change_data_set_name_with_report(data_set, report))
+    if data_arg is None:
+        return ['pass']
     if data_set_id in self._code_gen_tree.shared_data_sets:
         data_arg = f'"{data_set["name"]}",'
     table_params = []
@@ -97,7 +100,7 @@ async def code_gen_from_table(
         table_params.append(f'    categorical_columns={categorical_columns},')
     label_columns = compact_labels_info(properties['columns'], mapping)
     if label_columns:
-        label_columns_code_lines = self._code_gen_from_dict(label_columns, 4)
+        label_columns_code_lines = code_gen_from_dict(label_columns, 4)
         table_params.extend([f'    label_columns={label_columns_code_lines[0][4:]}', *label_columns_code_lines[1:]])
     return [
         'shimoku_client.plt.table(',

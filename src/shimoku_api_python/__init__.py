@@ -1,5 +1,11 @@
 from __future__ import absolute_import
+
+import shutil
 from typing import Dict, Optional
+
+import tempfile
+import subprocess
+import tqdm
 
 import shimoku_api_python.async_execution_pool
 from shimoku_api_python.async_execution_pool import async_auto_call_manager, ExecutionPoolContext
@@ -17,9 +23,9 @@ from shimoku_api_python.api.ping_api import PingApi
 from shimoku_api_python.api.activity_metadata_api import ActivityMetadataApi
 from shimoku_api_python.websockets_server import EventType
 
-from shimoku_api_python.code_generation.business_code_gen.code_gen_from_business import BusinessCodeGen
+from shimoku_api_python.code_generation.main_code_gen import generate_code
 
-from shimoku_api_python.utils import create_normalized_name, ShimokuPalette
+from shimoku_api_python.utils import create_normalized_name, ShimokuPalette, create_function_name
 
 from shimoku_api_python.client import ApiClient
 from shimoku_api_python.exceptions import BoardError, MenuPathError, WorkspaceError
@@ -30,6 +36,7 @@ import shimoku_components_catalog.html_components
 
 import logging
 from shimoku_api_python.execution_logger import configure_logging, logging_before_and_after, log_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,10 +44,10 @@ class Client(object):
 
     @logging_before_and_after(logging_level=logger.debug)
     def __init__(
-        self, universe_id: str = 'local', environment: str = 'production',
-        access_token: Optional[str] = None, config: Optional[Dict] = None,
-        verbosity: str = None, async_execution: bool = False,
-        local_port: int = 8000, open_browser_for_local_server: bool = False
+            self, universe_id: str = 'local', environment: str = 'production',
+            access_token: Optional[str] = None, config: Optional[Dict] = None,
+            verbosity: str = None, async_execution: bool = False,
+            local_port: int = 8000, open_browser_for_local_server: bool = False
     ):
         playground: bool = universe_id == 'local' and not access_token
         if playground:
@@ -245,21 +252,105 @@ class Client(object):
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.info)
     async def generate_code(
-        self, output_path: str = 'generated_code',
-        menu_paths: Optional[list[str]] = None, use_black_formatter: bool = False
+            self, output_path: str = 'generated_code',
+            menu_paths: Optional[list[str]] = None, use_black_formatter: bool = False,
+            show_progress_bar: bool = False
     ):
         """ Generate code for a set workspace.
         menu_paths: List of menu paths to generate code from, if None all menu paths are used.
         """
         if not self._business_object:
             log_error(logger, 'Workspace not set. Please use set_workspace() method first.', AttributeError)
-        await BusinessCodeGen(self._business_object, output_path, self.epc).generate_code(
-            environment=self._api_client.environment,
+        pbar = None
+        if show_progress_bar:
+            pbar = tqdm.tqdm(total=sum([len(await app.get_reports())
+                                        for app in await self._business_object.get_apps()]) + 1)
+        await generate_code(
+            business_object=self._business_object,
+            business_id=self.workspace_id,
             access_token=self._api_client.access_token,
             universe_id=self.universe_id,
-            business_id=self.workspace_id,
+            environment=self._api_client.environment,
+            output_path=output_path,
             menu_paths=menu_paths,
-            use_black_formatter=use_black_formatter
+            epc=self.epc,
+            use_black_formatter=use_black_formatter,
+            pbar=pbar
+        )
+        if pbar:
+            pbar.close()
+
+    @async_auto_call_manager(execute=True)
+    @logging_before_and_after(logging_level=logger.info)
+    async def commit_contents_to(
+            self, access_token: str,
+            universe_id: str, workspace_id: str,
+            environment: str = 'production',
+            show_progress_bar: bool = True
+    ):
+        """ Commit contents to another workspace.
+        :param access_token: access token to use
+        :param universe_id: universe id to use
+        :param workspace_id: workspace id to use
+        :param environment: environment to use
+        :param show_progress_bar: whether to show progress bar
+        """
+        if not self._business_object:
+            log_error(logger, 'Workspace not set. Please use set_workspace() method first.', AttributeError)
+        temp_dir = tempfile.mkdtemp()
+        pbar = None
+        if show_progress_bar:
+            pbar = tqdm.tqdm(total=sum([len(await app.get_reports())
+                                        for app in await self._business_object.get_apps()]) + 1)
+        await generate_code(
+            business_object=self._business_object,
+            business_id=workspace_id,
+            access_token=access_token,
+            universe_id=universe_id,
+            environment=environment,
+            output_path=temp_dir,
+            menu_paths=None,
+            epc=self.epc,
+            use_black_formatter=False,
+            pbar=pbar
+        )
+        if pbar:
+            pbar.close()
+        process = subprocess.run(
+            ['python', f'{temp_dir}/execute_workspace_{create_function_name(self._business_object["name"])}.py'],
+            check=True
+        )
+        if process.returncode != 0:
+            log_error(logger, 'Error while executing the generated code.', RuntimeError)
+        shutil.rmtree(temp_dir)
+
+    @logging_before_and_after(logging_level=logger.info)
+    def pull_contents_from(
+            self, access_token: str,
+            universe_id: str, workspace_id: str,
+            environment: str = 'production',
+            show_progress_bar: bool = True
+    ):
+        """ Pull contents from another workspace.
+        :param access_token: access token to use
+        :param universe_id: universe id to use
+        :param workspace_id: workspace id to use
+        :param environment: environment to use
+        :param show_progress_bar: whether to show progress bar
+        """
+        aux_shimoku_client = Client(
+            access_token=access_token,
+            universe_id=universe_id,
+            environment=environment,
+        )
+        aux_shimoku_client.set_workspace(workspace_id)
+
+        aux_shimoku_client.commit_contents_to(
+            access_token=self._api_client.access_token,
+            universe_id=self.universe_id,
+            workspace_id=self.workspace_id,
+            environment=self._api_client.environment,
+            show_progress_bar=show_progress_bar
         )
 
     @logging_before_and_after(logging_level=logger.info)

@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, List
 from copy import deepcopy
 from shimoku_api_python.utils import revert_uuids_from_dict, change_data_set_name_with_report
 from ...data_sets_code_gen.code_gen_from_data_sets import code_gen_read_csv_from_data_set, get_linked_data_set_info
+from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_dict, code_gen_from_list
 if TYPE_CHECKING:
     from ...code_gen_from_apps import AppCodeGen
     from shimoku_api_python.resources.report import Report
@@ -38,8 +39,8 @@ async def code_gen_from_echarts(
         data_arg = [f'"{data_set["name"]}",']
     elif data_set_id in self._code_gen_tree.custom_data_sets_with_data:
         val = self._code_gen_tree.custom_data_sets_with_data[data_set_id]
-        data_arg = self._code_gen_from_dict(val, 4) \
-            if isinstance(val, dict) else self._code_gen_from_list(val, 4)
+        data_arg = code_gen_from_dict(val, 4) \
+            if isinstance(val, dict) else code_gen_from_list(val, 4)
         data_arg[0] = data_arg[0][4:]
         data_arg += ['    data_is_not_df=True,']
         fields = '["data"]'
@@ -47,10 +48,13 @@ async def code_gen_from_echarts(
         data_arg = [
             (await code_gen_read_csv_from_data_set(
                 data_set, change_data_set_name_with_report(data_set, report)
-            )) + ','
+            ))
         ]
+        if data_arg[0] is None:
+            return ['pass']
+        data_arg[0] += ','
 
-    options_code = self._code_gen_from_dict(echart_options, 4)
+    options_code = code_gen_from_dict(echart_options, 4)
 
     return [
         'shimoku_client.plt.free_echarts(',

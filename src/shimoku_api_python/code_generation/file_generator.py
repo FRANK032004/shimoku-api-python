@@ -40,5 +40,3 @@ class CodeGenFileHandler:
     def generate_script_file(self, script_name: str, script_code_lines: list[str]):
         with open(os.path.join(self._output_path, script_name + '.py'), 'w') as f:
             f.write('\n'.join(script_code_lines))
-
-

@@ -1,6 +1,7 @@
 from shimoku_api_python.resources.reports.tabs_group import TabsGroup
 from shimoku_api_python.utils import create_function_name
 from .code_gen_from_other import code_gen_from_other_reports, delete_default_properties
+from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_value
 from typing import TYPE_CHECKING, List
 if TYPE_CHECKING:
     from ...code_gen_from_apps import AppCodeGen
@@ -14,17 +15,38 @@ async def code_gen_tabs_and_other(
     :return: list of code lines
     """
     code_lines: List[str] = []
-    components_ordered = sorted(tree['other'] + tree['tab_groups'], key=lambda x: x['order'])
-    for i, component in enumerate(components_ordered):
-        if isinstance(component, dict):
+    reports_ordered = sorted(tree['other'] + tree['tab_groups'], key=lambda x: x['order'])
+    for i, report in enumerate(reports_ordered):
+        report_obj = report if not isinstance(report, dict) else report['tabs_group']
+        if len(report_obj['bentobox']):
+            if (self._actual_bentobox is None or
+                    self._actual_bentobox['bentoboxId'] != report_obj['bentobox']['bentoboxId']):
+                self._actual_bentobox = report_obj['bentobox']
+
+                cols_size = self._actual_bentobox['bentoboxSizeColumns']
+                rows_size = self._actual_bentobox['bentoboxSizeRows']
+                code_lines.extend([
+                    '',
+                    f'shimoku_client.plt.set_bentobox(cols_size={cols_size}, rows_size={rows_size})'
+                ])
+        elif self._actual_bentobox is not None:
+            self._actual_bentobox = None
+            code_lines.append('shimoku_client.plt.pop_out_of_bentobox()')
+
+        if isinstance(report, dict):
             code_lines.extend([
                 '',
-                f'tabs_group_{create_function_name(component["tabs_group"]["properties"]["hash"])}(shimoku_client)']
+                f'tabs_group_{create_function_name(report["tabs_group"]["properties"]["hash"])}(shimoku_client)']
             )
         else:
             code_lines.extend(
-                await code_gen_from_other_reports(self, component, is_last=i == len(components_ordered) - 1)
+                await code_gen_from_other_reports(self, report)
             )
+
+        if i == len(reports_ordered) - 1 and self._actual_bentobox is not None:
+            self._actual_bentobox = None
+            code_lines.append('shimoku_client.plt.pop_out_of_bentobox()')
+
     return code_lines
 
 
@@ -67,7 +89,7 @@ async def code_gen_from_tabs_group(
         code_lines.append(f'    padding="{tabs_group["sizePadding"]}",')
     if parent_tabs_index:
         code_lines.extend([f'    parent_tabs_index={parent_tabs_index},'])
-    code_lines.extend([f'    {k}={self._code_gen_value(v)},' for k, v in properties.items()])
+    code_lines.extend([f'    {k}={code_gen_from_value(v)},' for k, v in properties.items()])
     code_lines.extend([')'])
 
     for tab in tree['tabs']:
@@ -80,7 +102,6 @@ async def code_gen_from_tabs_group(
                 '',
                 f'shimoku_client.plt.set_tabs_index(("{parent_tabs_index[0]}", "{parent_tabs_index[1]}"))'
             ])
-
     else:
         code_lines.extend(['', 'shimoku_client.plt.pop_out_of_tabs_group()'])
 

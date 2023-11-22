@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING, List
+from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_list
 if TYPE_CHECKING:
     from ...code_gen_from_apps import AppCodeGen
     from shimoku_api_python.resources.report import Report
@@ -22,6 +23,8 @@ async def code_gen_from_form(
         input_form_params.append(f'    auto_send=True,')
 
     events_on_submit = []
+    if 'events' not in properties:
+        properties['events'] = {'onSubmit': []}
     for event in properties['events']['onSubmit']:
         if event['action'] == 'openModal':
             input_form_params.append(
@@ -34,7 +37,7 @@ async def code_gen_from_form(
         else:
             events_on_submit.append(event)
     if events_on_submit:
-        code_gen_on_submit_events = self._code_gen_from_list(events_on_submit, 4)
+        code_gen_on_submit_events = code_gen_from_list(events_on_submit, 4)
         input_form_params.append(f'    on_submit_events={code_gen_on_submit_events[0][4:]}')
         input_form_params.extend(code_gen_on_submit_events[1:])
 

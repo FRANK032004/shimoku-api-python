@@ -9,6 +9,7 @@ from shimoku_api_python.utils import change_data_set_name_with_report
 
 from shimoku_api_python.code_generation.file_generator import CodeGenFileHandler
 
+import tqdm
 import pandas as pd
 import asyncio
 
@@ -21,15 +22,21 @@ logger = logging.getLogger(__name__)
 class CodeGenTree:
     """ Class for generating code generation tree. """
 
-    def __init__(self, app: App, file_generator: CodeGenFileHandler):
+    def __init__(self, app: App, file_generator: CodeGenFileHandler, pbar: Optional[tqdm.tqdm] = None):
         self._app = app
         self._file_generator = file_generator
+        self._pbar = pbar
         self.custom_data_sets_with_data = {}
         self.actual_bentobox: Optional[Dict] = None
         self.all_tab_groups: Dict[str, List[dict]] = {}
         self.tree: Optional[dict] = None
         self.shared_data_sets: List[str] = []
         self.needs_pandas: bool = False
+
+    def _update_pbar(self, n: int = 1):
+        return
+        if self._pbar is not None:
+            self._pbar.update(n)
 
     @logging_before_and_after(logger.debug)
     async def _check_for_shared_data_sets(
@@ -58,11 +65,15 @@ class CodeGenTree:
         :param data_set: data set to create file for
         :param report: report to create file for
         """
+        if data_set['name'] is None:
+            data_set['name'] = data_set['id']
+
         data: List[dict] = [
             {k: v for k, v in dp.cascade_to_dict().items()
              if k not in ['id', 'dataSetId'] and v is not None}
             for dp in await data_set.get_data_points()
         ]
+        print('gotten data points')
 
         if len(data) == 0:
             return
@@ -83,17 +94,19 @@ class CodeGenTree:
 
         # To store the data sets in the cache for the reports to have faster access to them
         await self._app.get_data_sets()
-
+        print('gotten_datasets')
         individual_data_sets: Dict[str, Report] = {}
         seen_data_sets = set()
 
         await asyncio.gather(*[self._check_for_shared_data_sets(report, seen_data_sets, individual_data_sets)
                                for report in reports])
-
+        tasks = []
         for ds_id in self.shared_data_sets:
-            await self._check_for_create_data_set(await self._app.get_data_set(ds_id))
+            tasks.append(self._check_for_create_data_set(await self._app.get_data_set(ds_id)))
         for ds_id, report in individual_data_sets.items():
-            await self._check_for_create_data_set(await self._app.get_data_set(ds_id), report)
+            tasks.append(self._check_for_create_data_set(await self._app.get_data_set(ds_id), report))
+        await asyncio.gather(*tasks)
+        print('gotten datasets')
 
     @logging_before_and_after(logger.debug)
     async def _tree_from_tabs_group(
@@ -127,6 +140,8 @@ class CodeGenTree:
                         tab_dict['tab_groups'], child_report, seen_reports, (tabs_group['properties']['hash'], tab))
                 else:
                     tab_dict['other'].append(child_report)
+                print('report in tabs')
+                self._update_pbar()
             tab_dict['tab_groups'] = sorted(tab_dict['tab_groups'], key=lambda x: x['tabs_group']['order'])
             tab_dict['other'] = sorted(tab_dict['other'], key=lambda x: x['order'])
     
@@ -147,6 +162,8 @@ class CodeGenTree:
                 await self._tree_from_tabs_group(modal_dict['tab_groups'], child_report, seen_reports)
             else:
                 modal_dict['other'].append(child_report)
+            print('report in modal')
+            self._update_pbar()
         modal_dict['tab_groups'] = sorted(modal_dict['tab_groups'], key=lambda x: x['tabs_group']['order'])
         modal_dict['other'] = sorted(modal_dict['other'], key=lambda x: x['order'])
     
@@ -156,12 +173,16 @@ class CodeGenTree:
         :param self: PlotApi instances
         """
         self.tree = {}
+        reports = await self._app.get_reports()
+        for report in reports:
+            if 'hash' not in report['properties']:
+                report['properties']['hash'] = 'id_'+report['id']
         reports = sorted(
-            await self._app.get_reports(),
+            reports,
             key=lambda x:
             '0' if x['reportType'] == 'MODAL' else
             '1' if x['reportType'] == 'TABS' else
-            '_' + x['properties']['hash']
+            '_' + (x['properties']['hash']),
         )
         seen_reports = set()
         for report in reports:
@@ -178,6 +199,8 @@ class CodeGenTree:
                 await self._tree_from_tabs_group(self.tree[report['path']]['tab_groups'], report, seen_reports)
             else:
                 self.tree[report['path']]['other'].append(report)
+            print('report')
+            self._update_pbar()
 
         for path in self.tree:
             self.tree[path]['other'] = sorted(self.tree[path]['other'], key=lambda x: x['order'])
@@ -186,6 +209,7 @@ class CodeGenTree:
 
         # Todo: Solve path ordering
         # self.tree = {k: v for k, v in sorted(reports.items(), key=lambda item: }
+        print('data_sets')
         await self._get_data_sets()
 
         

@@ -3,6 +3,7 @@ import asyncio
 from shimoku_api_python.utils import change_data_set_name_with_report
 
 from ...data_sets_code_gen.code_gen_from_data_sets import code_gen_read_csv_from_data_set
+
 if TYPE_CHECKING:
     from ...code_gen_from_apps import AppCodeGen
     from shimoku_api_python.resources.report import Report
@@ -23,6 +24,7 @@ async def code_gen_from_annotated_echart(
     data_set_names = [change_data_set_name_with_report(data_set, report) for data_set in data_sets]
     data_args = await asyncio.gather(*[code_gen_read_csv_from_data_set(data_set, name)
                                        for data_set, name in zip(data_sets, data_set_names)])
+    data_args = [data_arg for data_arg in data_args if data_arg is not None]
     slider_properties = properties.get('slider') or {}
     marks = slider_properties.pop('marks') if 'marks' in slider_properties else None
 

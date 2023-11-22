@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING, List
+from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_dict
 if TYPE_CHECKING:
     from ...code_gen_from_apps import AppCodeGen
     from shimoku_api_python.resources.report import Report
@@ -33,7 +34,7 @@ async def code_gen_from_button_activity(
 async def code_gen_from_button_generic(
         self: 'AppCodeGen', report: 'Report', report_params: List[str]
 ) -> List[str]:
-    events_code = self._code_gen_from_dict(report['properties']['events'], 4)
+    events_code = code_gen_from_dict(report['properties']['events'], 4)
     return [
         'shimoku_client.plt.button(',
         *report_params,

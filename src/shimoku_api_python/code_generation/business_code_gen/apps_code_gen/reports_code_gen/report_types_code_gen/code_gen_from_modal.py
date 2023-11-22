@@ -1,8 +1,9 @@
 from shimoku_api_python.resources.reports.modal import Modal
 from shimoku_api_python.utils import create_function_name
-from shimoku_api_python.code_generation.business_code_gen.apps_code_gen.reports_code_gen.report_types_code_gen.code_gen_from_other import delete_default_properties
-from shimoku_api_python.code_generation.business_code_gen.apps_code_gen.reports_code_gen.report_types_code_gen.code_gen_from_tabs import code_gen_tabs_and_other
+from .code_gen_from_other import delete_default_properties
+from .code_gen_from_tabs import code_gen_tabs_and_other
 from typing import TYPE_CHECKING, List
+from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_value
 if TYPE_CHECKING:
     from ...code_gen_from_apps import AppCodeGen
 
@@ -21,11 +22,12 @@ async def code_gen_from_modal(self: 'AppCodeGen', tree: dict) -> List[str]:
     if 'reportIds' in properties:
         del properties['reportIds']
     if 'open' in properties:
+        if properties['open']:
+            properties['open_by_default'] = True
         del properties['open']
-        properties['open_by_default'] = True
     code_lines.extend([
         'shimoku_client.plt.set_modal(',
-        *[f'    {k}={self._code_gen_value(v)},' for k, v in properties.items()],
+        *[f'    {k}={code_gen_from_value(v)},' for k, v in properties.items()],
         ')',
     ])
     code_lines.extend(await code_gen_tabs_and_other(self, tree))
