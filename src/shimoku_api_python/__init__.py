@@ -49,10 +49,10 @@ class Client(object):
             verbosity: str = None, async_execution: bool = False,
             local_port: int = 8000, open_browser_for_local_server: bool = False
     ):
-        playground: bool = universe_id == 'local' and not access_token
-        if playground:
+        self.playground: bool = universe_id == 'local' and not access_token
+        if self.playground:
             access_token = 'local'
-        if universe_id == 'local' and not playground:
+        if universe_id == 'local' and not self.playground:
             log_error(logger, 'Local universe can only be used in playground mode.', AttributeError)
 
         self.universe_id = universe_id
@@ -64,7 +64,7 @@ class Client(object):
 
         self.server_host = '127.0.0.1'
         self.local_port = local_port
-        if playground and not check_server(self.server_host, local_port):
+        if self.playground and not check_server(self.server_host, local_port):
             create_server(environment, self.server_host, local_port, open_browser_for_local_server)
 
         self.configure_logging = configure_logging
@@ -74,7 +74,7 @@ class Client(object):
         if access_token and access_token != "":
             config = {'access_token': access_token}
 
-        self._api_client = ApiClient(config=config, environment=environment, playground=playground,
+        self._api_client = ApiClient(config=config, environment=environment, playground=self.playground,
                                      server_host=self.server_host, server_port=local_port)
 
         self._universe_object = Universe(self._api_client, uuid=universe_id)
@@ -177,6 +177,20 @@ class Client(object):
         self._dashboard_object: Dashboard = await self._business_object.get_dashboard(name=name)
         self._dashboard_object.currently_in_use = True
         self.board_id = self._dashboard_object['id']
+
+    @logging_before_and_after(logging_level=logger.info)
+    def pop_out_of_dashboard(self):
+        """ Pop out of the dashboard. """
+        if not self._business_object:
+            log_error(logger, 'Workspace not set. Please use set_workspace() method first.', AttributeError)
+        if not self._dashboard_object:
+            log_error(logger, 'Board not set. Please use set_board() method first.', BoardError)
+        if self._app_object:
+            self.pop_out_of_menu_path()
+        self.run()
+        self._dashboard_object.currently_in_use = False
+        self._dashboard_object = None
+        self.board_id = None
 
     @logging_before_and_after(logging_level=logger.info)
     def enable_caching(self):

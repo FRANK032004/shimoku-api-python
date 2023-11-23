@@ -15,7 +15,7 @@ class CodeGenFileHandler:
             os.makedirs(self._output_path)
 
     @logging_before_and_after(logger.debug)
-    def create_data_frame_file(self, file_name: str, data: pd.DataFrame):
+    def create_data_frame_file(self, file_name: str, data: pd.DataFrame, mapping: dict[str, str]):
         """ Create a file for a data set. """
 
         if not os.path.exists(f'{self._output_path}/data'):
@@ -28,6 +28,10 @@ class CodeGenFileHandler:
         if 'orderField1' in data.columns:
             data = data.sort_values(by='orderField1')
             data = data.drop(columns=['orderField1'])
+
+        for column in data:
+            if column in mapping:
+                data = data.rename(columns={column: mapping[column]})
 
         try:
             data.to_csv(

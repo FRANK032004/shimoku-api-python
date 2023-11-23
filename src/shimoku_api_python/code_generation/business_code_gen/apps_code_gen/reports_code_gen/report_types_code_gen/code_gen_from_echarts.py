@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 async def code_gen_from_echarts(
-        self: 'AppCodeGen', report: 'Report', report_params: List[str], properties: dict
+        self: 'AppCodeGen', report: 'Report', properties: dict
 ) -> List[str]:
     """ Generate code for an echarts report.
     :param report: report to generate code from
@@ -29,8 +29,25 @@ async def code_gen_from_echarts(
         log_error(logger,
                   'Only one data set is supported for the current implementation of the echarts component.',
                   RuntimeError)
-    fields = [mapping[1] for mapping in mappings]
+
     data_set_id, data_set = list(referenced_data_sets.items())[0] if len(referenced_data_sets) > 0 else (None, None)
+    rev_columns = {v: k for k, v in data_set['columns'].items()} if data_set is not None else {}
+    fields = []
+    for _, mapping in mappings:
+        if isinstance(mapping, dict):
+            entry = {}
+            for k, v in mapping.items():
+                entry[k] = rev_columns[v] if v in rev_columns else v
+            fields.append(entry)
+        elif isinstance(mapping, list):
+            entry = []
+            for v in mapping:
+                entry.append(rev_columns[v] if v in rev_columns else v)
+            fields.append(entry)
+        elif mapping in rev_columns:
+            fields.append(rev_columns[mapping])
+        else:
+            fields.append(mapping)
 
     data_arg = ['[{}],']
     if data_set_id in self._code_gen_tree.shared_data_sets:
@@ -58,7 +75,7 @@ async def code_gen_from_echarts(
 
     return [
         'shimoku_client.plt.free_echarts(',
-        *report_params,
+        *self.code_gen_report_params(report.cascade_to_dict()),
         f'    data={data_arg[0]}',
         *data_arg[1:],
         f'    fields={fields},',

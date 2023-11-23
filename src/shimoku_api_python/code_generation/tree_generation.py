@@ -40,7 +40,7 @@ class CodeGenTree:
 
     @logging_before_and_after(logger.debug)
     async def _check_for_shared_data_sets(
-        self, report: Report, seen_data_sets: set, individual_data_sets: Dict[str, Report]
+            self, report: Report, seen_data_sets: set, individual_data_sets: Dict[str, Report]
     ):
         """ Check for shared data sets in a report.
             :param report: report to check
@@ -82,7 +82,8 @@ class CodeGenTree:
 
         if len(data) > 1 or 'customField1' not in data[0]:
             output_name = data_set["name"] if report is None else change_data_set_name_with_report(data_set, report)
-            self._file_generator.create_data_frame_file(output_name, data_as_df)
+            reverse_columns = {v: k for k, v in data_set['columns'].items()}
+            self._file_generator.create_data_frame_file(output_name, data_as_df, reverse_columns)
             self.needs_pandas = True
         else:
             self.custom_data_sets_with_data[data_set['id']] = data[0]['customField1']
@@ -144,7 +145,7 @@ class CodeGenTree:
                 self._update_pbar()
             tab_dict['tab_groups'] = sorted(tab_dict['tab_groups'], key=lambda x: x['tabs_group']['order'])
             tab_dict['other'] = sorted(tab_dict['other'], key=lambda x: x['order'])
-    
+
     @logging_before_and_after(logger.debug)
     async def _tree_from_modal(self, tree: list, modal: Modal, seen_reports: set):
         """ Recursively build a tree of reports from a modal.
@@ -166,7 +167,7 @@ class CodeGenTree:
             self._update_pbar()
         modal_dict['tab_groups'] = sorted(modal_dict['tab_groups'], key=lambda x: x['tabs_group']['order'])
         modal_dict['other'] = sorted(modal_dict['other'], key=lambda x: x['order'])
-    
+
     @logging_before_and_after(logger.debug)
     async def generate_tree(self):
         """ Generate a tree of reports from a list of reports.
@@ -176,13 +177,13 @@ class CodeGenTree:
         reports = await self._app.get_reports()
         for report in reports:
             if 'hash' not in report['properties']:
-                report['properties']['hash'] = 'id_'+report['id']
+                report['properties']['hash'] = 'id_' + report['id']
         reports = sorted(
             reports,
-            key=lambda x:
-            '0' if x['reportType'] == 'MODAL' else
-            '1' if x['reportType'] == 'TABS' else
-            '_' + (x['properties']['hash']),
+            key=lambda x: (x['pathOrder'] if x['pathOrder'] else 0,
+                           '0' if x['reportType'] == 'MODAL' else
+                           '1' if x['reportType'] == 'TABS' else
+                           '_' + (x['properties']['hash'])),
         )
         seen_reports = set()
         for report in reports:
@@ -205,11 +206,9 @@ class CodeGenTree:
         for path in self.tree:
             self.tree[path]['other'] = sorted(self.tree[path]['other'], key=lambda x: x['order'])
             self.tree[path]['tab_groups'] = sorted(self.tree[path]['tab_groups'],
-                key=lambda x: x['tabs_group']['order'])
+                                                   key=lambda x: x['tabs_group']['order'])
 
         # Todo: Solve path ordering
         # self.tree = {k: v for k, v in sorted(reports.items(), key=lambda item: }
         print('data_sets')
         await self._get_data_sets()
-
-        

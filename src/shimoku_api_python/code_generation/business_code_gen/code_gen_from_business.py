@@ -38,6 +38,7 @@ class BusinessCodeGen:
         extra_apps_for_dashboard = {}
         last_dashboard = None
         dashboards = sorted(await self._business.get_dashboards(), key=lambda x: x['order'])
+        created_dashboards = []
         for app in apps:
             app_id = app['id']
             app_code_gen = AppCodeGen(app, self._output_path, self.epc, pbar=pbar)
@@ -49,6 +50,7 @@ class BusinessCodeGen:
             first_dashboard, *extra_dashboards = [dashboard
                                                   for dashboard in dashboards
                                                   if app_id in await dashboard.list_app_ids()]
+            created_dashboards.append(first_dashboard)
             if first_dashboard['name'] != last_dashboard:
                 aux_code_lines.append(f'shimoku_client.set_board("{first_dashboard["name"]}")')
                 last_dashboard = first_dashboard['name']
@@ -66,6 +68,17 @@ class BusinessCodeGen:
                 '    name="' + dashboard_name + '",',
                 f'    menu_path_names={app_names_code_lines[0][4:]}',
                 *app_names_code_lines[1:],
+                ')'
+            ])
+
+        if created_dashboards != dashboards:
+            dashboards_code_lines = code_gen_from_list([dashboard['name'] for dashboard in dashboards], deep=4)
+            main_code_lines.extend([
+                '',
+                'shimoku_client.workspaces.change_boards_order(',
+                f'   uuid="{business_id}",',
+                f'   boards={dashboards_code_lines[0][4:]}',
+                *dashboards_code_lines[1:],
                 ')'
             ])
 

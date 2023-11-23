@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from shimoku_api_python.resources.report import Report
 
 
-def compact_labels_info(columns: list[dict], mapping: dict) -> dict:
+def compact_labels_info(columns: list[dict]) -> dict:
     """ Compact label info.
     :return: compacted label info
     """
@@ -17,7 +17,7 @@ def compact_labels_info(columns: list[dict], mapping: dict) -> dict:
             continue
         chips_dict = column['chips']
         variant = chips_dict['variant']
-        mapping_from_field = mapping[column['field']]
+        mapping_from_field = column['field']
         entry_key = mapping_from_field
         chips_options = chips_dict['options']
         if variant != 'filled':
@@ -55,11 +55,10 @@ def compact_labels_info(columns: list[dict], mapping: dict) -> dict:
 
 
 async def code_gen_from_table(
-        self: 'AppCodeGen', report: 'Report', report_params: List[str], properties: dict
+        self: 'AppCodeGen', report: 'Report', properties: dict
 ) -> List[str]:
     """ Generate code for a table report.
     :param report: report to generate code from
-    :param report_params: parameters of the report
     :param properties: properties of the report
     :return: list of code lines
     """
@@ -74,9 +73,9 @@ async def code_gen_from_table(
     table_params = []
     # TODO: This will need to have the correct names for the columns
     # TODO: Chips
-    mapping = properties['rows']['mapping']
-    if mapping:
-        table_params.append(f'    columns={list(mapping.values())},')
+    rev_mapping = {v: k for k, v in properties['rows']['mapping'].items()}
+    if rev_mapping:
+        table_params.append(f'    columns={list(rev_mapping.values())},')
     if properties['pagination']['pageSize'] != 10:
         table_params.append(f'    page_size={properties["pagination"]["pageSize"]},')
     if not properties['columnsButton']:
@@ -88,24 +87,24 @@ async def code_gen_from_table(
     if not properties['search']:
         table_params.append(f'    search=False,')
     if properties.get('sort'):
-        sort_field = properties['sort']['field']
+        sort_field = rev_mapping[properties['sort']['field']]
         sort_direction = properties['sort']['direction']
         table_params.append(f'    initial_sort_column="{sort_field}",')
         if sort_direction != 'asc':
             table_params.append(f'    sort_descending=True,')
 
-    categorical_columns = [mapping[col_dict['field']]
+    categorical_columns = [col_dict['field']
                            for col_dict in properties['columns'] if col_dict.get('type') == 'singleSelect']
     if categorical_columns:
         table_params.append(f'    categorical_columns={categorical_columns},')
-    label_columns = compact_labels_info(properties['columns'], mapping)
+    label_columns = compact_labels_info(properties['columns'])
     if label_columns:
         label_columns_code_lines = code_gen_from_dict(label_columns, 4)
         table_params.extend([f'    label_columns={label_columns_code_lines[0][4:]}', *label_columns_code_lines[1:]])
     return [
         'shimoku_client.plt.table(',
         f'    data={data_arg},',
-        *report_params,
+        *self.code_gen_report_params(report.cascade_to_dict()),
         *table_params,
         ')'
     ]

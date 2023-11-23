@@ -38,6 +38,21 @@ class AppCodeGen:
         self._file_generator: CodeGenFileHandler = CodeGenFileHandler(self._output_path)
         self._code_gen_tree: CodeGenTree = CodeGenTree(app, self._file_generator, pbar=pbar)
 
+    @staticmethod
+    def code_gen_report_params(report: Dict) -> List[str]:
+        """ Generate code for the parameters of a report.
+        :param report: report to generate code from
+        :return: list of code lines
+        """
+        report_params_to_get = {
+            'order': 'order', 'title': 'title',
+            'sizeColumns': 'cols_size', 'sizeRows': 'rows_size',
+            'sizePadding': 'padding',
+        }
+        return [f'    {report_params_to_get[k]}='
+                + (f'"{(report[k])}",'if isinstance(report[k], str) else f'{report[k]},')
+                for k in report if k in report_params_to_get]
+
     @logging_before_and_after(logger.debug)
     async def generate_code(self):
         """ Use the resources in the API to generate code_lines for the SDK. Create a file in

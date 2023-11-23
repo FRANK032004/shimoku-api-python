@@ -216,7 +216,7 @@ class BusinessMetadataApi(ABC):
         business = await self._get_business_with_warning(uuid=uuid, name=name)
         if not business:
             return
-        await asyncio.gather(*[business.update_dashboard(name=d_name, order=i) for i, d_name in enumerate(boards)])
+        await asyncio.gather(*[business.update_dashboard(name=d_name, order=i+1) for i, d_name in enumerate(boards)])
 
     @logging_before_and_after(logging_level=logger.debug)
     async def _change_sub_paths_order(

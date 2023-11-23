@@ -48,21 +48,12 @@ async def code_gen_from_other_reports(
     properties = delete_default_properties(report['properties'], report.default_properties)
     del properties['hash']
 
-    report_params_to_get = {
-        'order': 'order', 'title': 'title',
-        'sizeColumns': 'cols_size', 'sizeRows': 'rows_size',
-        'sizePadding': 'padding',
-    }
-    report_params = [f'    {report_params_to_get[k]}=' + (f'"{(report[k])}",'
-                                                          if isinstance(report[k], str) else f'{report[k]},')
-                     for k in report if k in report_params_to_get]
-
     if report['reportType'] == 'INDICATOR':
-        code_lines.extend(await code_gen_from_indicator(self, report_params, properties))
+        code_lines.extend(await code_gen_from_indicator(self, report, properties))
     elif report['reportType'] == 'ECHARTS2':
-        code_lines.extend(await code_gen_from_echarts(self, report, report_params, properties))
+        code_lines.extend(await code_gen_from_echarts(self, report, properties))
     elif report['reportType'] == 'TABLE':
-        code_lines.extend(await code_gen_from_table(self, report, report_params, properties))
+        code_lines.extend(await code_gen_from_table(self, report, properties))
     elif report['reportType'] == 'FORM':
         code_lines.extend(await code_gen_from_form(self, report, properties))
     elif report['reportType'] == 'HTML':
@@ -70,7 +61,7 @@ async def code_gen_from_other_reports(
     elif report['reportType'] == 'IFRAME':
         code_lines.extend(await code_gen_from_iframe(self, report))
     elif report['reportType'] == 'ANNOTATED_ECHART':
-        code_lines.extend(await code_gen_from_annotated_echart(self, report, report_params, properties))
+        code_lines.extend(await code_gen_from_annotated_echart(self, report, properties))
     elif report['reportType'] == 'BUTTON':
         code_lines.extend(await code_gen_from_button(self, report))
     elif report['reportType'] == 'FILTERDATASET':

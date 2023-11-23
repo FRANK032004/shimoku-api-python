@@ -27,14 +27,18 @@ async def code_gen_read_csv_from_data_set(data_set: DataSet, name: str) -> Optio
     :param name: name of the data set
     :return: code line
     """
+    reverse_columns = {v: k for k, v in data_set['columns'].items()}
     data_point = await data_set.get_one_data_point()
     if data_point is None:
         return None
     data_point = data_point.cascade_to_dict()
     parse_dates = []
     for key, value in data_point.items():
+        if key not in reverse_columns:
+            reverse_columns[key] = key
         if 'date' in key and value is not None:
-            parse_dates.append(key)
+            parse_dates.append(reverse_columns[key])
+
     return (
         f'pd.read_csv('
         f'f"{{data_folder_path}}/{name}.csv"{f", parse_dates={parse_dates}" if parse_dates else ""})'
