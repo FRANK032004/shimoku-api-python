@@ -835,6 +835,7 @@ class PlotApi:
         cols_size = report_params.get('cols_size', 12)
         rows_size = report_params.get('rows_size', 1)
         padding = report_params.get('padding')
+        original_padding = padding
 
         len_df = len(df)
         if vertical and (len_df > 1 or isinstance(vertical, str)):
@@ -882,11 +883,14 @@ class PlotApi:
         for index, df_row in df.iterrows():
 
             if not vertical:
-                padding = padding_else
-                if index == first_index:
+                if index == first_index and index == last_index:
+                    padding = original_padding
+                elif index == first_index:
                     padding = padding_left
                 elif index == last_index:
                     padding = padding_right
+                else:
+                    padding = padding_else
             elif index == last_index and vertical and (len_df > 1 or isinstance(vertical, str)):
                 padding = '1,1,1,1'
 

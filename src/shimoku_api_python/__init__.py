@@ -218,12 +218,14 @@ class Client(object):
 
     @async_auto_call_manager(execute=True)
     @logging_before_and_after(logging_level=logger.debug)
-    async def _change_app(self, menu_path: str):
+    async def _change_app(self, menu_path: str, dont_add_to_dashboard: bool):
         """Change app in use for the following calls.
         :param menu_path: Menu path of the app
+        :param dont_add_to_dashboard: Whether to add the menu path to the dashboard
         """
         if self._app_object:
             self._app_object.currently_in_use = False
+
         app: App = await self._business_object.get_app(name=menu_path)
         self._app_object = app
         app.currently_in_use = True
@@ -233,19 +235,23 @@ class Client(object):
         self.data = DataSetManagingApi(self._app_object, self.epc)
         self.io = FileMetadataApi(self._app_object, self.epc)
 
+        self.menu_path_id = self._app_object['id']
+
+        if dont_add_to_dashboard:
+            return
+
         if not self._dashboard_object:
             self._dashboard_object = await self._business_object.get_dashboard(name='Default Name')
 
         if self._app_object['id'] not in await self._dashboard_object.list_app_ids():
             await self._dashboard_object.insert_app(self._app_object)
 
-        self.menu_path_id = self._app_object['id']
-
     @logging_before_and_after(logging_level=logger.info)
-    def set_menu_path(self, name: str, sub_path: Optional[str] = None):
+    def set_menu_path(self, name: str, sub_path: Optional[str] = None, dont_add_to_dashboard: bool = False):
         """Set menu path for the client.
         :param name: Menu path
         :param sub_path: Sub path
+        :param dont_add_to_dashboard: Whether to add the menu path to the dashboard
         """
         if not self._business_object:
             log_error(logger, 'Workspace not set. Please use set_workspace() method first.', AttributeError)
@@ -258,7 +264,7 @@ class Client(object):
                 self.plt.change_path(path)
                 return
             data_names = self.plt.get_shared_data_names()
-        self._change_app(name)
+        self._change_app(name, dont_add_to_dashboard)
         self.plt.change_path(path)
         if data_names:
             logger.info(f'Shared data entries will no longer be available: {data_names}, set them again if needed.')
@@ -402,6 +408,6 @@ class Client(object):
         """ Get attribute of the client. """
         if item in ['boards', 'menu_paths'] and not self._business_object:
             log_error(logger, 'Workspace not set. Please use set_workspace() method first.', AttributeError)
-        if item in ['activities', 'plt', 'reports', 'data', 'io'] and not self._app_object:
+        if item in ['activities', 'plt', 'components', 'data', 'io'] and not self._app_object:
             log_error(logger, 'Menu path not set. Please use set_menu_path() method first.', AttributeError)
         return object.__getattribute__(self, item)

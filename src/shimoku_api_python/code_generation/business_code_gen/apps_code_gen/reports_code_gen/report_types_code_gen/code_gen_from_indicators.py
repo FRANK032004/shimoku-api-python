@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, List
 from shimoku_api_python.resources.report import Report
+from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_dict
 if TYPE_CHECKING:
     from ...code_gen_from_apps import AppCodeGen
 
@@ -16,11 +17,11 @@ async def code_gen_from_indicator(
     if self._actual_bentobox:
         report_dict['sizeColumns'] += 1
     report_params = self.code_gen_report_params(report_dict)
+    properties_code_lines = code_gen_from_dict(properties, 4)
     return [
         'shimoku_client.plt.indicator(',
         *report_params,
-        '    data=dict(',
-        *[f'        {k}="{v}",' for k, v in properties.items() if v is not None],
-        '    )',
+        f'    data={properties_code_lines[0][4:]}',
+        *properties_code_lines[1:],
         ')'
     ]

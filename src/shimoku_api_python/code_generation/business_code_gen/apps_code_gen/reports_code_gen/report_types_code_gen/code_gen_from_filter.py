@@ -14,7 +14,7 @@ async def code_gen_from_filter(
     filter_def = report['properties']['filter'][0]
     field_name = filter_def['field']
     mapping = report['properties']['mapping'][0]
-    field = mapping[field_name]
+    field = field_name
     data_set = await self._app.get_data_set(mapping['id'])
     report_params = [
         f'    order={report["order"]},',

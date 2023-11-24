@@ -1,7 +1,8 @@
 from typing import TYPE_CHECKING, List
 from shimoku_api_python.utils import change_data_set_name_with_report
 from ...data_sets_code_gen.code_gen_from_data_sets import code_gen_read_csv_from_data_set
-from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_dict
+from shimoku_api_python.code_generation.utils_code_gen import code_gen_from_dict, code_gen_from_list
+from copy import deepcopy
 if TYPE_CHECKING:
     from ...code_gen_from_apps import AppCodeGen
     from shimoku_api_python.resources.report import Report
@@ -54,6 +55,19 @@ def compact_labels_info(columns: list[dict]) -> dict:
     return label_columns
 
 
+def get_column_options(columns: list[dict]) -> dict:
+    """ Get column options.
+    :return: column options
+    """
+    column_options = {}
+    for column in columns:
+        not_wanted_keys = ['field', 'headerName', 'order', 'type', 'chips', 'options']
+        single_column_options = {k: v for k, v in column.items() if k not in not_wanted_keys}
+        if single_column_options:
+            column_options[column['field']] = single_column_options
+    return column_options
+
+
 async def code_gen_from_table(
         self: 'AppCodeGen', report: 'Report', properties: dict
 ) -> List[str]:
@@ -78,6 +92,10 @@ async def code_gen_from_table(
         table_params.append(f'    columns={list(rev_mapping.values())},')
     if properties['pagination']['pageSize'] != 10:
         table_params.append(f'    page_size={properties["pagination"]["pageSize"]},')
+    if 'pageSizeOptions' in properties['pagination']:
+        page_size_code_lines = code_gen_from_list(properties['pagination']['pageSizeOptions'], 8)
+        table_params.extend([f'    page_size_options={page_size_code_lines[0][8:]}',
+                             *page_size_code_lines[1:]])
     if not properties['columnsButton']:
         table_params.append(f'    columns_button=False,')
     if not properties['filtersButton']:
@@ -92,6 +110,11 @@ async def code_gen_from_table(
         table_params.append(f'    initial_sort_column="{sort_field}",')
         if sort_direction != 'asc':
             table_params.append(f'    sort_descending=True,')
+    column_options = get_column_options(properties['columns'])
+    if column_options:
+        column_options_code_lines = code_gen_from_dict(column_options, 8)
+        table_params.extend([f'    columns_options={column_options_code_lines[0][8:]}',
+                             *column_options_code_lines[1:]])
 
     categorical_columns = [col_dict['field']
                            for col_dict in properties['columns'] if col_dict.get('type') == 'singleSelect']
