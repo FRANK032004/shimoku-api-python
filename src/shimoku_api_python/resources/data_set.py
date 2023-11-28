@@ -208,7 +208,7 @@ class DataSet(Resource):
 
         params = dict(
             name=alias,
-            columns={},
+            columns=None,
         )
         super().__init__(parent=parent, uuid=uuid, db_resource=db_resource, children=[self.DataPoint],
                          check_params_before_creation=['name'], params=params,
@@ -245,7 +245,7 @@ class DataSet(Resource):
             converted_data_points = [converted_data_points]
         await self._base_resource.create_children_batch(self.DataPoint, converted_data_points, unit=' data points')
         keys = [k for k in converted_data_points[0].keys() if not copy_sort or copy_sort['field'] != k]
-        if isinstance(data_points, (pd.DataFrame, list)) and len(data_points) > 0:
+        if self.api_client.playground and isinstance(data_points, (pd.DataFrame, list)) and len(data_points) > 0:
             if isinstance(data_points, pd.DataFrame):
                 data_points = data_points.to_dict('records')
             self['columns'] = {k: m for k, m in zip(data_points[0].keys(), converted_data_points[0].keys())}

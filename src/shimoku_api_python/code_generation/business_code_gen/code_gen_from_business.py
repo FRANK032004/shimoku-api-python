@@ -7,7 +7,7 @@ from shimoku_api_python.utils import create_function_name, create_normalized_nam
 
 from shimoku_api_python.code_generation.file_generator import CodeGenFileHandler
 from .apps_code_gen.code_gen_from_apps import AppCodeGen
-from ..utils_code_gen import code_gen_from_list
+from ..utils_code_gen import code_gen_from_list, code_gen_from_dict
 
 
 class BusinessCodeGen:
@@ -29,6 +29,14 @@ class BusinessCodeGen:
             'import shimoku_api_python as shimoku'
         ]
         main_code_lines: List[str] = [f'shimoku_client.set_workspace("{business_id}")', '']
+
+        if self._business['theme']:
+            theme_code_lines = code_gen_from_dict(self._business['theme'], deep=4)
+            main_code_lines.extend([
+                f'shimoku_client.workspaces.update_workspace("{business_id}", theme={theme_code_lines[0][4:]})',
+                *theme_code_lines[1:],
+                ''
+            ])
 
         if menu_paths:
             menu_paths = [create_normalized_name(menu_path) for menu_path in menu_paths]

@@ -203,4 +203,3 @@ class AppMetadataApi:
     get_roles = user_get_roles
     create_role = user_create_role
     delete_role = user_delete_role
-

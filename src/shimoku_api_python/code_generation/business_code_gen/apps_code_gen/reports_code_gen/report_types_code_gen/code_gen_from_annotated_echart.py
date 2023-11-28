@@ -22,7 +22,10 @@ async def code_gen_from_annotated_echart(
     report_data_sets: List[Report.ReportDataSet] = await report.get_report_data_sets()
     data_set_ids = [rds['dataSetId'] for rds in report_data_sets]
     data_sets = await asyncio.gather(*[self._app.get_data_set(ds_id) for ds_id in data_set_ids])
-    rev_data_set_columns = [{v: k for k, v in data_set['columns'].items()} for data_set in data_sets]
+    if data_sets[0]['columns']:
+        rev_data_set_columns = [{v: k for k, v in data_set['columns'].items()} for data_set in data_sets]
+    else:
+        rev_data_set_columns = [{"dateField1": "dateField1", "intField1": "intField1"} for _ in data_sets]
     data_set_names = [change_data_set_name_with_report(data_set, report) for data_set in data_sets]
     data_args = await asyncio.gather(*[code_gen_read_csv_from_data_set(data_set, name)
                                        for data_set, name in zip(data_sets, data_set_names)])

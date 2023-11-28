@@ -4,6 +4,7 @@ import json5
 import logging
 from typing import Tuple, Dict, List, Optional, Union
 from enum import Enum
+import unicodedata
 
 import numpy as np
 import pandas as pd
@@ -38,10 +39,15 @@ def create_function_name(name: Optional[str]) -> str:
 
     if name is None:
         return 'no_path'
+
+    # Normalize to ASCII
+    normalized_name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
+
     # Change Uppercase to '_' + lowercase if previous character is in abecedary
-    name = ''.join(['_' + c.lower() if c.isupper() and i > 0 and name[i - 1].isalpha() else c
-                    for i, c in enumerate(name) if check_correct_character(c)])
-    return create_normalized_name(name).replace('-', '_')
+    normalized_name = ''.join(['_' + c.lower() if c.isupper() and i > 0 and normalized_name[i - 1].isalpha() else c
+                               for i, c in enumerate(normalized_name) if check_correct_character(c)])
+
+    return create_normalized_name(normalized_name).replace('-', '_')
 
 
 def create_normalized_name(name: str) -> str:

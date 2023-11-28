@@ -27,7 +27,9 @@ async def code_gen_read_csv_from_data_set(data_set: DataSet, name: str) -> Optio
     :param name: name of the data set
     :return: code line
     """
-    reverse_columns = {v: k for k, v in data_set['columns'].items()}
+    reverse_columns = {}
+    if data_set['columns']:
+        reverse_columns = {v: k for k, v in data_set['columns'].items()}
     data_point = await data_set.get_one_data_point()
     if data_point is None:
         return None

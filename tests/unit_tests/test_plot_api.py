@@ -3671,7 +3671,6 @@ class TestPlotApi(unittest.TestCase):
             },
             custom_data={
                 'tree_data': tree_data,
-                'sunburst_data': sunburst_data,
             }
         )
         indicator()

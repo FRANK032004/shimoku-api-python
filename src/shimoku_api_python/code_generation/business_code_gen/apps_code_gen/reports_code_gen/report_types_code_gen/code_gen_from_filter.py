@@ -12,10 +12,10 @@ async def code_gen_from_filter(
     :return: list of code lines
     """
     filter_def = report['properties']['filter'][0]
-    field_name = filter_def['field']
     mapping = report['properties']['mapping'][0]
-    field = field_name
+    field_name = filter_def['field']
     data_set = await self._app.get_data_set(mapping['id'])
+    field = field_name if data_set['columns'] else mapping[field_name]
     report_params = [
         f'    order={report["order"]},',
         f'    data="{data_set["name"]}",',

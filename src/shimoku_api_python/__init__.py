@@ -54,7 +54,8 @@ class Client(object):
             access_token = 'local'
         if universe_id == 'local' and not self.playground:
             log_error(logger, 'Local universe can only be used in playground mode.', AttributeError)
-
+        self.access_token = access_token
+        self.environment = environment
         self.universe_id = universe_id
         self.workspace_id = None
         self.board_id = None

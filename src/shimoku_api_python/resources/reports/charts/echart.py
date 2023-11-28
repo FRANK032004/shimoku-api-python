@@ -10,7 +10,7 @@ class EChart(Report):
     report_type = 'ECHARTS2'
 
     default_properties = dict(
-        hash=None,
+        **Report.default_properties,
         option={},
     )
 

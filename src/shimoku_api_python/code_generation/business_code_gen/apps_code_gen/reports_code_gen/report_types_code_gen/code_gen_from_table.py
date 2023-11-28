@@ -85,11 +85,9 @@ async def code_gen_from_table(
     if data_set_id in self._code_gen_tree.shared_data_sets:
         data_arg = f'"{data_set["name"]}",'
     table_params = []
-    # TODO: This will need to have the correct names for the columns
-    # TODO: Chips
-    rev_mapping = {v: k for k, v in properties['rows']['mapping'].items()}
-    if rev_mapping:
-        table_params.append(f'    columns={list(rev_mapping.values())},')
+    rev_mapping = {v: (k if data_set['columns'] else v) for k, v in properties['rows']['mapping'].items()}
+    mapping = properties['rows']['mapping']
+    table_params.append(f'    columns={list(rev_mapping.values())},')
     if properties['pagination']['pageSize'] != 10:
         table_params.append(f'    page_size={properties["pagination"]["pageSize"]},')
     if 'pageSizeOptions' in properties['pagination']:
@@ -116,7 +114,7 @@ async def code_gen_from_table(
         table_params.extend([f'    columns_options={column_options_code_lines[0][8:]}',
                              *column_options_code_lines[1:]])
 
-    categorical_columns = [col_dict['field']
+    categorical_columns = [col_dict['field'] if data_set['columns'] else mapping[col_dict['field']]
                            for col_dict in properties['columns'] if col_dict.get('type') == 'singleSelect']
     if categorical_columns:
         table_params.append(f'    categorical_columns={categorical_columns},')

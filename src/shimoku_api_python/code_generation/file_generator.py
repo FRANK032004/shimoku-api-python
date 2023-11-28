@@ -1,6 +1,6 @@
 import pandas as pd
 import os
-
+from typing import Optional
 import logging
 from shimoku_api_python.execution_logger import logging_before_and_after
 
@@ -15,7 +15,7 @@ class CodeGenFileHandler:
             os.makedirs(self._output_path)
 
     @logging_before_and_after(logger.debug)
-    def create_data_frame_file(self, file_name: str, data: pd.DataFrame, mapping: dict[str, str]):
+    def create_data_frame_file(self, file_name: str, data: pd.DataFrame, mapping: Optional[dict[str, str]]):
         """ Create a file for a data set. """
 
         if not os.path.exists(f'{self._output_path}/data'):
@@ -29,12 +29,16 @@ class CodeGenFileHandler:
             data = data.sort_values(by='orderField1')
             data = data.drop(columns=['orderField1'])
 
-        for column in data:
-            if column in mapping:
-                data = data.rename(columns={column: mapping[column]})
+        if mapping is None:
+            mapping = {column: column for column in data.columns}
 
+        aux_data = pd.DataFrame()
+        for column in mapping:
+            if column in data:
+                aux_data[column] = data[column]
+                aux_data = aux_data.rename(columns={column: mapping[column]})
         try:
-            data.to_csv(
+            aux_data.to_csv(
                 os.path.join(f'{self._output_path}/data', f'{file_name}.csv'), index=False
             )
         except Exception as e:

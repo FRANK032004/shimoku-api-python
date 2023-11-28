@@ -78,7 +78,9 @@ async def code_gen_from_echarts(
                   RuntimeError)
 
     data_set_id, data_set = list(referenced_data_sets.items())[0] if len(referenced_data_sets) > 0 else (None, None)
-    rev_columns = {v: k for k, v in data_set['columns'].items()} if data_set is not None else {}
+    rev_columns = {}
+    if data_set_id is not None and data_set['columns']:
+        rev_columns = {v: k for k, v in data_set['columns'].items()}
 
     data_is_custom = data_set_id in self._code_gen_tree.custom_data_sets_with_data
     fields = code_gen_from_list(get_fields_from_mapping(rev_columns, mappings, data_is_custom), 4)

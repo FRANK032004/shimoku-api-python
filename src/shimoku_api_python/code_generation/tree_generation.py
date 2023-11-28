@@ -34,7 +34,6 @@ class CodeGenTree:
         self.needs_pandas: bool = False
 
     def _update_pbar(self, n: int = 1):
-        return
         if self._pbar is not None:
             self._pbar.update(n)
 
@@ -73,7 +72,6 @@ class CodeGenTree:
              if k not in ['id', 'dataSetId'] and v is not None}
             for dp in await data_set.get_data_points()
         ]
-        print('gotten data points')
 
         if len(data) == 0:
             return
@@ -82,7 +80,7 @@ class CodeGenTree:
 
         if len(data) > 1 or 'customField1' not in data[0]:
             output_name = data_set["name"] if report is None else change_data_set_name_with_report(data_set, report)
-            reverse_columns = {v: k for k, v in data_set['columns'].items()}
+            reverse_columns = {v: k for k, v in data_set['columns'].items()} if data_set['columns'] else None
             self._file_generator.create_data_frame_file(output_name, data_as_df, reverse_columns)
             self.needs_pandas = True
         else:
@@ -95,7 +93,7 @@ class CodeGenTree:
 
         # To store the data sets in the cache for the reports to have faster access to them
         await self._app.get_data_sets()
-        print('gotten_datasets')
+
         individual_data_sets: Dict[str, Report] = {}
         seen_data_sets = set()
 
@@ -107,16 +105,14 @@ class CodeGenTree:
         for ds_id, report in individual_data_sets.items():
             tasks.append(self._check_for_create_data_set(await self._app.get_data_set(ds_id), report))
         await asyncio.gather(*tasks)
-        print('gotten datasets')
 
     @logging_before_and_after(logger.debug)
     async def _tree_from_tabs_group(
-            self, tree: list, tabs_group: TabsGroup, seen_reports: set, parent_tabs_index: Tuple[str, str] = None
+            self, tree: list, tabs_group: TabsGroup, parent_tabs_index: Tuple[str, str] = None
     ):
         """ Recursively build a tree of reports from a tabs group.
         :param tree: list to append to
         :param tabs_group: tabs group to build tree from
-        :param seen_reports: set of report ids that have already been seen
         :param parent_tabs_index: tuple of (tabs_group hash, tab name) of parent tabs group
         """
         tabs_group_dict = {'tabs_group': tabs_group, 'tabs': {}, 'order': tabs_group['order'],
@@ -134,37 +130,34 @@ class CodeGenTree:
             tab_dict = {'tab_groups': [], 'other': []}
             tabs_group_dict['tabs'][tab] = tab_dict
             for child_id in report_ids:
-                seen_reports.add(child_id)
                 child_report = await self._app.get_report(child_id)
                 if child_report['reportType'] == 'TABS':
                     await self._tree_from_tabs_group(
-                        tab_dict['tab_groups'], child_report, seen_reports, (tabs_group['properties']['hash'], tab))
+                        tab_dict['tab_groups'], child_report, (tabs_group['properties']['hash'], tab))
                 else:
                     tab_dict['other'].append(child_report)
-                print('report in tabs')
                 self._update_pbar()
+
             tab_dict['tab_groups'] = sorted(tab_dict['tab_groups'], key=lambda x: x['tabs_group']['order'])
             tab_dict['other'] = sorted(tab_dict['other'], key=lambda x: x['order'])
 
     @logging_before_and_after(logger.debug)
-    async def _tree_from_modal(self, tree: list, modal: Modal, seen_reports: set):
+    async def _tree_from_modal(self, tree: list, modal: Modal, ):
         """ Recursively build a tree of reports from a modal.
         :param self: PlotApi instance
         :param tree: list to append to
         :param modal: modal to build tree from
-        :param seen_reports: set of report ids that have already been seen
         """
         modal_dict = {'modal': modal, 'tab_groups': [], 'other': []}
         tree.append(modal_dict)
         for child_id in modal['properties']['reportIds']:
-            seen_reports.add(child_id)
             child_report = await self._app.get_report(child_id)
             if child_report['reportType'] == 'TABS':
-                await self._tree_from_tabs_group(modal_dict['tab_groups'], child_report, seen_reports)
+                await self._tree_from_tabs_group(modal_dict['tab_groups'], child_report)
             else:
                 modal_dict['other'].append(child_report)
-            print('report in modal')
             self._update_pbar()
+
         modal_dict['tab_groups'] = sorted(modal_dict['tab_groups'], key=lambda x: x['tabs_group']['order'])
         modal_dict['other'] = sorted(modal_dict['other'], key=lambda x: x['order'])
 
@@ -175,9 +168,16 @@ class CodeGenTree:
         """
         self.tree = {}
         reports = await self._app.get_reports()
+        contained_reports = set()
         for report in reports:
+            # TODO: make this not necessary
             if 'hash' not in report['properties']:
                 report['properties']['hash'] = 'id_' + report['id']
+            if report['reportType'] == 'MODAL':
+                contained_reports.update(report['properties']['reportIds'])
+            elif report['reportType'] == 'TABS':
+                for tab in report['properties']['tabs']:
+                    contained_reports.update(report['properties']['tabs'][tab]['reportIds'])
         reports = sorted(
             reports,
             key=lambda x: (x['pathOrder'] if x['pathOrder'] else 0,
@@ -185,22 +185,21 @@ class CodeGenTree:
                            '1' if x['reportType'] == 'TABS' else
                            '_' + (x['properties']['hash'])),
         )
-        seen_reports = set()
         for report in reports:
 
-            if report['id'] in seen_reports:
+            if report['id'] in contained_reports:
                 continue
 
             if report['path'] not in self.tree:
                 self.tree[report['path']] = {'modals': [], 'tab_groups': [], 'other': []}
 
             if report['reportType'] == 'MODAL':
-                await self._tree_from_modal(self.tree[report['path']]['modals'], report, seen_reports)
+                await self._tree_from_modal(self.tree[report['path']]['modals'], report)
             elif report['reportType'] == 'TABS':
-                await self._tree_from_tabs_group(self.tree[report['path']]['tab_groups'], report, seen_reports)
+                await self._tree_from_tabs_group(self.tree[report['path']]['tab_groups'], report)
             else:
                 self.tree[report['path']]['other'].append(report)
-            print('report')
+
             self._update_pbar()
 
         for path in self.tree:
@@ -210,5 +209,4 @@ class CodeGenTree:
 
         # Todo: Solve path ordering
         # self.tree = {k: v for k, v in sorted(reports.items(), key=lambda item: }
-        print('data_sets')
         await self._get_data_sets()

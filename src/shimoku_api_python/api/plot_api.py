@@ -1,5 +1,3 @@
-import json
-
 import pandas as pd
 import asyncio
 import numpy as np
@@ -630,6 +628,11 @@ class PlotApi:
 
         params['bentobox'] = self._get_bentobox_data(order=order)
         params['path'] = self._current_path
+
+        if hasattr(self, 'code_generation_metadata'):
+            if 'properties' not in params:
+                params['properties'] = {}
+            params['properties']['code_generation_metadata'] = getattr(self, 'code_generation_metadata')
 
         event_type: EventType = EventType.REPORT_UPDATED
         r_hash, chart = await self._get_chart_report(order, chart_class, create_if_not_exists=False)
