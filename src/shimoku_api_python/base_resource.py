@@ -64,7 +64,8 @@ class ResourceCache:
 
             resources_raw: Dict = await (
                 self._parent.api_client.query_element(
-                    endpoint=endpoint, method='GET', limit=limit
+                    endpoint=endpoint, method='GET', limit=limit,
+                    elastic_supported=self._resource_class.elastic_supported
                 )
             )
             try:
@@ -568,6 +569,7 @@ class Resource(ABC):
     alias_field: Optional[AliasField] = None
     resource_type: Optional[str] = None
     plural: Optional[str] = None
+    elastic_supported: bool = False
 
     @logging_before_and_after(logging_level=logger.debug)
     def __init__(

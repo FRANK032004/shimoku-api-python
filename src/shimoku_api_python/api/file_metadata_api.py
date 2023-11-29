@@ -43,9 +43,9 @@ class FileMetadataApi:
         :param with_shimoku_generated: if True, allow to delete a file with the tag 'shimoku_generated'
         """
         file: File = await self._app.get_file(name=file_name)
-        if file is not None:
+        if file is None:
             log_error(logger, f'File {file_name} not found', ShimokuFileError)
-        if file is not None and 'shimoku_generated' in file['tags'] and not with_shimoku_generated:
+        if 'shimoku_generated' in file['tags'] and not with_shimoku_generated:
             log_error(logger, f'File {file_name} is shimoku generated, if you are sure you want to delete it, '
                               f'please set with_shimoku_generated to True', ShimokuFileError)
 

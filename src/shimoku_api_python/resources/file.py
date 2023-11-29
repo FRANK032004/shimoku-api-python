@@ -16,6 +16,7 @@ class File(Resource):
     resource_type = 'file'
     plural = 'files'
     alias_field = 'name'
+    elastic_supported = True
 
     @logging_before_and_after(logger.debug)
     def __init__(self, parent: 'App', uuid: Optional[str] = None, alias: Optional[str] = None,

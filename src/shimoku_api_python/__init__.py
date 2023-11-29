@@ -57,6 +57,7 @@ class Client(object):
         access_token: Optional[str] = None, config: Optional[Dict] = None,
         verbosity: str = None, async_execution: bool = False,
         local_port: int = 8000, open_browser_for_local_server: bool = False,
+        retry_attempts: int = 5
     ):
         playground: bool = universe_id == 'local' and not access_token
         if playground:
@@ -84,8 +85,9 @@ class Client(object):
         if access_token and access_token != "":
             config = {'access_token': access_token}
 
-        self._api_client = ApiClient(config=config, environment=environment, playground=playground,
-                                     server_host=self.server_host, server_port=local_port)
+        self._api_client = ApiClient(
+            config=config, environment=environment, playground=playground,
+            server_host=self.server_host, server_port=local_port, retry_attempts=retry_attempts)
 
         self._universe_object = Universe(self._api_client, uuid=universe_id)
         self._business_object: Optional[Business] = None
