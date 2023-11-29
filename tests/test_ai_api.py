@@ -20,7 +20,7 @@ last_execution_time: float = 0
 def execute_ai_function(wf: str, model_name: Optional[str] = None) -> str:
     global last_execution_time
     tics = 0
-    while last_execution_time is not None and time.time() - last_execution_time < 32:
+    while last_execution_time is not None and time.time() - last_execution_time < 40:
         print('\rWaiting for min run interval'+('.'*(tics % 4))+'      ', end='')
         tics += 1
         time.sleep(0.5)
